@@ -2,7 +2,7 @@ use std::fmt;
 use std::io;
 
 #[derive(Debug)]
-enum ConfigParserError {
+pub enum ConfigParserError {
     Io(io::Error),
     InvalidSyntax { 
         line_number: usize, 
