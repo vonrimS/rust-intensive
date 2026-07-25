@@ -54,3 +54,69 @@ pub fn parse_line<'a>(line: &'a str, line_number: usize) -> Result<ParsedLine<'a
         })
     }
 }
+
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_comments_and_empty_lines() {
+        assert!(matches!(
+            parse_line("", 1),
+            Ok(ParsedLine::EmptyOrComment)
+        ));
+        assert!(matches!(
+            parse_line("   ", 1),
+            Ok(ParsedLine::EmptyOrComment)
+        ));
+        assert!(matches!(
+            parse_line("; this is a comment", 1),
+            Ok(ParsedLine::EmptyOrComment)
+        ));
+        assert!(matches!(
+            parse_line(" # another comment", 1),
+            Ok(ParsedLine::EmptyOrComment)
+        ));
+    }
+
+    #[test]
+    fn test_parse_valid_section() {
+        let res = parse_line("  [DATABASE]  ", 1).unwrap();
+        if let ParsedLine::Section(name) = res {
+            assert_eq!(name, "DATABASE");
+        } else {
+            panic!("Expected ParsedLine::Section");
+        }
+    }
+
+    #[test]
+    fn test_parse_invalid_section() {
+        let res = parse_line("[DATABASE", 1);
+        assert!(res.is_err());
+    }
+
+    #[test]
+    fn test_parse_valid_entry() {
+        let res = parse_line("  HOST  =   localhost ", 1).unwrap();
+        if let ParsedLine::Entry { key, value } = res {
+            assert_eq!(key, "HOST");
+            assert_eq!(value, "localhost");
+        } else {
+            panic!("Expected ParsedLine::Entry");
+        }
+    }
+
+    #[test]
+    fn test_parse_entry_with_extra_equals() {
+        // Проверяем, что split_once корректно разделяет по первому '='
+        let res = parse_line("URL = https://site.com?a=1&b=2", 1).unwrap();
+        if let ParsedLine::Entry { key, value } = res {
+            assert_eq!(key, "URL");
+            assert_eq!(value, "https://site.com?a=1&b=2");
+        } else {
+            panic!("Expected ParsedLine::Entry");
+        }
+    }
+}
