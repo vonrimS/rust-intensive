@@ -19,12 +19,42 @@ impl fmt::Display for ValidationError {
 pub enum AccessStatus {
     Granted,
     Restricted,
-}
+}    
 
 pub fn parse_age(input: &str) -> Result<u8, ValidationError> {
+    let trimmed = input.trim();
 
+    trimmed
+        .parse::<u8>()
+        .map_err(|_| ValidationError::InvalidNumber)
 }
 
 pub fn check_access(age: u8) -> AccessStatus {
+    if age >= 18 {
+        AccessStatus::Granted
+    } else {
+        AccessStatus::Restricted
+    }
+}
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_valid_age_parsing() {
+        assert_eq!(parse_age(" 24 \n"), Ok(24));
+    }
+
+    #[test]
+    fn test_invalid_age_parsing() {
+        assert_eq!(parse_age("abc"), Err(ValidationError::InvalidNumber));
+    }
+
+    #[test]
+    fn test_access_check() {
+        assert_eq!(check_access(20), AccessStatus::Granted);
+        assert_eq!(check_access(17), AccessStatus::Restricted);
+    }
 }
