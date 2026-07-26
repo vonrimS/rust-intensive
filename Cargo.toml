@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
 members = [
-    # "m1--basics-cli/p1--config-to-env-migrator",
+    "m0-projects/p1-hello-cli-formatter",
 ]
