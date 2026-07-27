@@ -53,6 +53,8 @@ cargo run -p p2-temperature-converter
 cargo test -p p2-temperature-converter
 ```
 
+---
+
 💡 Expected Behavior Example
 
 ```bash
