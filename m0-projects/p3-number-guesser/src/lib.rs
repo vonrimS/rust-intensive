@@ -21,6 +21,7 @@ pub fn generate_secret_number() -> u32 {
     rand::random_range(1..=100)
 }
 
+
 pub fn parse_guess(input: &str) -> Result<u32, GuessErrors> {
     let num = input
         .trim()
