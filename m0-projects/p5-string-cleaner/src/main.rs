@@ -1,3 +1,9 @@
+
+
 fn main() {
-    println!("Hello, world!");
+
+}
+
+fn read_input() -> String {
+    
 }
