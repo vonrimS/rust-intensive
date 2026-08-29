@@ -37,4 +37,36 @@ fn collapse_spaces(input: &mut String) {
 
 
 
-// #[cfg(test)]
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_trim_in_place(){
+        let mut input = String::from("  abc xyz  ");
+        trim_in_place(&mut input);
+        assert_eq!(input, String::from("abc xyz"));
+    }
+
+    #[test]
+    fn test_collapse_spaces(){
+        let mut input = String::from("abc  xyz");
+        collapse_spaces(&mut input);
+        assert_eq!(input, String::from("abc xyz"));
+    }
+
+    #[test]
+    fn test_remove_chontrol_chars(){
+        let mut input = String::from("abc \n\r\txyz");
+        remove_control_chars(&mut input);
+        assert_eq!(input, String::from("abc xyz"));
+    }
+
+    #[test]
+    fn test_clean_string_full_pipeline(){
+        let mut input = String::from("  abc\n\r  \t  xyz  ");
+        clean_string(&mut input);
+        assert_eq!(input, String::from("abc xyz"));
+    }
+
+}

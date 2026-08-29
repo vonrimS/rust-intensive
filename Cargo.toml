@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
 members = [
-    "m0-projects/p1-hello-cli-formatter", "m0-projects/p2-temperature-converter",
+    "m0-projects/p1-hello-cli-formatter", "m0-projects/p2-temperature-converter", "m0-projects/p3-number-guesser", "m0-projects/p4-text-stat-calculator", "m0-projects/p5-string-cleaner",
 ]
