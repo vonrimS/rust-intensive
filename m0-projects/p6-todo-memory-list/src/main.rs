@@ -1,3 +1,3 @@
 fn main() {
-    println!("Hello, world!");
+    println!("Todo Memory List CLI");
 }
