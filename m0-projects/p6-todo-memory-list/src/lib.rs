@@ -59,4 +59,57 @@ impl TodoList {
 }
 
 
+#[cfg(test)]
+mod tests{
+    use super::*;
+    
+    #[test]
+    fn test_add_item() {
+        let mut list = TodoList::new();
+        let item = list.add_item("Buy milk");
+
+        assert_eq!(item.id, 1);
+        assert_eq!(item.title, "Buy milk");
+        assert_eq!(item.status, Status::Pending);
+        assert_eq!(list.list_items().len(), 1);
+    }
+
+    #[test]
+    fn test_mark_done() {
+        let mut list = TodoList::new();
+        list.add_item("Read Rust Book");
+
+        assert!(list.mark_done(1).is_ok());
+        assert_eq!(list.list_items()[0].status, Status::Done);
+
+        assert!(list.mark_done(999).is_err());
+    }
+
+    #[test]
+    fn test_remove_item() {
+        let mut list = TodoList::new();
+        list.add_item("First Todo Item");
+        list.add_item("Second Todo Item");
+
+        let removed = list.remove_item(1);
+
+        assert!(removed.is_some());
+
+        assert_eq!(removed.unwrap().title, "First Todo Item");
+        assert_eq!(list.list_items().len(), 1);
+    }
+
+    #[test]
+    fn test_auto_increment() {
+        let mut list = TodoList::new();
+        
+        let item1 = list.add_item("Task 1");
+        assert_eq!(item1.id, 1);
+
+        let item2 = list.add_item("Task 2");
+        assert_eq!(item2.id, 2);
+    }
+
+
+}
 
