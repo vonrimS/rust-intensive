@@ -7,14 +7,14 @@ pub enum Status {
 
 #[derive(Debug, PartialEq, Clone)]
 pub struct TodoItem {
-    id: usize,
-    title: String,
-    status: Status,
+    pub id: usize,
+    pub title: String,
+    pub status: Status,
 }
 
 pub struct TodoList {
-    items: Vec<TodoItem>,
-    next_id: usize,
+    pub items: Vec<TodoItem>,
+    pub next_id: usize,
 }
 
 impl TodoList {
