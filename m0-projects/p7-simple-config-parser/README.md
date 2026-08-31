@@ -80,4 +80,5 @@ Retrieved values:
 Error handling check:
 [!] Looking for missing key 'timeout': NotFound("timeout")
 [!] Invalid type cast for 'host' as usize: ParseValueError { key: "host", expected_type: "usize" }
+
 ```
