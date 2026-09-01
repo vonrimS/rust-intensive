@@ -11,6 +11,7 @@ pub enum ConfigError {
     NotFound(String),
 }
 
+#[derive(Debug, PartialEq, Default)]
 pub struct Config {
     entries: HashMap<String, String>,
 }
@@ -25,7 +26,7 @@ impl Config {
     // Parse a configuration string line-by-line, stripping whitespace and skipping empty lines or comments (starting with `#`)
     pub fn parse(text: &str) -> Result<Self, ConfigError> {
         let mut config = Config::new();
-            
+
         for line in text.lines() {
             // Strip leading and trailing whitespace and tabs from the line
             let trimmed = line.trim();
@@ -51,7 +52,6 @@ impl Config {
 
             // Store in the HashMap (converting &str into owned String)
             config.entries.insert(key.to_string(), value.to_string());
-
         }
 
         Ok(config)
@@ -64,11 +64,76 @@ impl Config {
 
     // Safely fetch and convert a stored string value into a target type `T`
     pub fn get_as<T: FromStr>(&self, key: &str) -> Result<T, ConfigError> {
-        let raw_val= self.get(key).ok_or_else(|| ConfigError::NotFound(key.to_string()))?;
+        let raw_val = self
+            .get(key)
+            .ok_or_else(|| ConfigError::NotFound(key.to_string()))?;
 
-        raw_val.parse::<T>().map_err(|_| ConfigError::ParseValueError { 
-            key: key.to_string(), 
-            expected_type: std::any::type_name::<T>(),
-        })
+        raw_val
+            .parse::<T>()
+            .map_err(|_| ConfigError::ParseValueError {
+                key: key.to_string(),
+                expected_type: std::any::type_name::<T>(),
+            })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_valid_config() {
+        let input = r#"
+            # Server Configuration
+            host = 127.0.0.1
+            port = 8080
+            debug = true
+        "#;
+
+        let config = Config::parse(input).expect("Failed to parse valid config");
+
+        assert_eq!(config.get("host"), Some("127.0.0.1"));
+        assert_eq!(config.get_as::<usize>("port"), Ok(8080));
+        assert_eq!(config.get_as::<bool>("debug"), Ok(true));
+    }
+
+    #[test]
+    fn test_invalid_line_error() {
+        let input = "invalid_input_without_equals";
+        assert_eq!(
+            Config::parse(input),
+            Err(ConfigError::InvalidLine(
+                "invalid_input_without_equals".to_string()
+            ))
+        );
+    }
+
+    #[test]
+    fn test_empty_key_error() {
+        let input = " = 8080";
+        assert_eq!(
+            Config::parse(input),
+            Err(ConfigError::EmptyKey("= 8080".to_string()))
+        );
+    }
+
+    #[test]
+    fn test_not_found_error() {
+        let config = Config::new();
+        assert_eq!(
+            config.get_as::<usize>("missing"),
+            Err(ConfigError::NotFound("missing".to_string()))
+        );
+    }
+
+
+    #[test]
+    fn test_parse_value_error() {
+        let input = "port = some wrong value";
+        let config = Config::parse(input).unwrap();
+        assert!(matches!(
+            config.get_as::<usize>("port"),
+            Err(ConfigError::ParseValueError { .. })
+        ));
     }
 }

@@ -43,7 +43,6 @@ fn main() {
         Err(err) => println!("[!] Failed to parse sample config: {:?}", err),
     }
 
-
     // Interactive CLI input mode
     println!("\n=== Interactive Parsing Mode ===");
     println!("Enter a KEY=VALUE line (or type 'exit' to quit):");
@@ -70,10 +69,11 @@ fn main() {
 
         match Config::parse(trimmed) {
             Ok(config) => {
-                if let Some(val) = config.get(trimmed.split_once('=').unwrap_or(("","")).0.trim()){
+                if let Some(val) = config.get(trimmed.split_once('=').unwrap_or(("", "")).0.trim())
+                {
                     println!("[+] Successfully stored! Raw value: '{}'", val);
                 } else {
-                    println!("[+] Config parsed into empty map.");                    
+                    println!("[+] Config parsed into empty map.");
                 }
             }
             Err(err) => println!("[!] Parse Error: {:?}", err),
