@@ -59,11 +59,16 @@ impl Config {
 
     // Retrieve a reference to a raw string value by key
     pub fn get(&self, key: &str) -> Option<&str> {
-        todo!()
+        self.entries.get(key).map(|s| s.as_str())
     }
 
     // Safely fetch and convert a stored string value into a target type `T`
     pub fn get_as<T: FromStr>(&self, key: &str) -> Result<T, ConfigError> {
-        todo!()
+        let raw_val= self.get(key).ok_or_else(|| ConfigError::NotFound(key.to_string()))?;
+
+        raw_val.parse::<T>().map_err(|_| ConfigError::ParseValueError { 
+            key: key.to_string(), 
+            expected_type: std::any::type_name::<T>(),
+        })
     }
 }
