@@ -74,6 +74,14 @@ name = "p6-todo-memory-list"
 version = "0.1.0"
 
 [[package]]
+name = "p7-simple-config-parser"
+version = "0.1.0"
+
+[[package]]
+name = "p8-file-word-counter"
+version = "0.1.0"
+
+[[package]]
 name = "r-efi"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
