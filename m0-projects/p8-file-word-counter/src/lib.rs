@@ -1,5 +1,5 @@
 use std::{
-    fs::{self, File},
+    fs::File,
     io::{self, BufRead, BufReader, Error},
 };
 
@@ -62,4 +62,34 @@ pub fn count_stats(path: &str) -> Result<TextStats, FileCounterError> {
     }
 
     Ok(stats)
+}
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_line(){
+        let mut stats = TextStats::new();
+        let s = "A B C";
+        parse_line(s, &mut stats);
+
+        assert_eq!(stats.lines, 1);
+        assert_eq!(stats.words, 3);
+        assert_eq!(stats.bytes, 5);
+    }
+
+    #[test]
+    fn test_empty_path() {
+        let path = "   ";
+        assert_eq!(count_stats(path), Err(FileCounterError::EmptyPath));
+    }
+
+    #[test]
+    fn test_unexisting_file() {
+        let path = "./tests/123.txt";
+        let result = count_stats(path);
+        assert!(matches!(result, Err(FileCounterError::IoError(_))));        
+    }
 }
