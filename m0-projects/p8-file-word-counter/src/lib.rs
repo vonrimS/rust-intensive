@@ -1,6 +1,5 @@
 use std::{
-    fs::File,
-    io::{self, BufRead, BufReader, Error},
+    fmt::{self}, fs::File, io::{self, BufRead, BufReader, Error},
 };
 
 #[derive(Debug)]
@@ -27,11 +26,21 @@ impl PartialEq for FileCounterError {
     }
 }
 
+impl fmt::Display for FileCounterError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FileCounterError::EmptyPath => write!(f, "File path cannot be empty"),
+            FileCounterError::IoError(err) => write!(f, "IO Error: {}", err),
+        }
+    }
+}
+
 #[derive(Debug, PartialEq, Eq, Clone, Default)]
 pub struct TextStats {
     pub lines: usize,
     pub words: usize,
     pub bytes: usize,
+    pub chars: usize,
 }
 
 impl TextStats {
@@ -44,6 +53,7 @@ pub fn parse_line(line: &str, stats: &mut TextStats) {
     stats.lines += 1;
     stats.bytes += line.len();
     stats.words += line.split_whitespace().count();
+    stats.chars += line.chars().count();    
 }
 
 pub fn count_stats(path: &str) -> Result<TextStats, FileCounterError> {
