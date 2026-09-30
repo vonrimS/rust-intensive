@@ -18,7 +18,7 @@ The application defines a unified geometric interface (Shape) implemented by var
     * Derive standard traits (`Debug`, `Clone`, `PartialEq`) where appropriate.
 
 2. Generic Utilities & Static Dispatch:
-    * `print_shape_info<T: + Display Shape>(shape: &T)`: Accept any type implementing both `Shape` and `Display` via trait bounds, printing formatted details about the shape to standard output.
+    * `print_shape_info<T: Display + Shape>(shape: &T)`: Accept any type implementing both `Shape` and `Display` via trait bounds, printing formatted details about the shape to standard output.
     * `total_area<T: Shape>(shapes: &[T]) -> f64`: Compute the total combined area of a slice of homogeneous shapes using compile-time static dispatch (`impl Trait` / generic parameters).
 
 3. Architecture (`lib.rs` / `main.rs`):
