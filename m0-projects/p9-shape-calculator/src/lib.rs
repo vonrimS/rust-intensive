@@ -11,6 +11,12 @@ pub trait Shape {
     fn perimeter(&self) -> f64;
 }
 
+/// Trait providing compile-time type metadata for shape.
+pub trait NamedShape: Shape {
+    /// Plural name of the geometric shape (e.g., "Rectangles", "Circles")l
+    const PLURAL_NAME: &'static str;
+}
+
 /// Represents the circle with a given radius.
 #[derive(Debug, Clone, PartialEq)]
 pub struct Circle {
@@ -89,11 +95,34 @@ impl Display for Triangle {
     }
 }
 
+impl NamedShape for Circle {
+    const PLURAL_NAME: &'static str = "Circles";
+}
+
+impl NamedShape for Rectangle {
+    const PLURAL_NAME: &'static str = "Rectangles";
+}
+
+impl NamedShape for Triangle {
+    const PLURAL_NAME: &'static str = "Triangles";
+}
+
 /// Print formatted information about a shape to standard output.
 pub fn print_shape_info<T: Display + Shape>(shape: &T) {
     println!("--- {} ---", shape);
     println!("Area:       {:.2}", shape.area());
     println!("Perimeter:  {:.2}\n", shape.perimeter());
+}
+
+/// Generic helper to print aggregate metrics using compile-time type information.
+pub fn print_aggregate_info<T: NamedShape>(shapes: &[T]) {
+    println!("--- Aggregate Calculations (Static Dispatch) ---");
+    println!(
+        "Total area of {} {}: {:.2}",
+        shapes.len(),
+        T::PLURAL_NAME,
+        total_area(shapes)
+    );
 }
 
 /// Computes the combined total area of a slice of homogeneous shapes using static dispatch.
@@ -202,5 +231,12 @@ mod tests {
         let circle2 = circle1.clone();
 
         assert_eq!(circle1, circle2);
+    }
+
+    #[test]
+    fn test_plural_names() {
+        assert_eq!(Circle::PLURAL_NAME, "Circles");
+        assert_eq!(Rectangle::PLURAL_NAME, "Rectangles");
+        assert_eq!(Triangle::PLURAL_NAME, "Triangles");
     }
 }

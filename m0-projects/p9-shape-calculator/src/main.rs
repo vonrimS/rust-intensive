@@ -1,4 +1,4 @@
-use p9_shape_calculator::{Circle, Rectangle, Triangle, print_shape_info};
+use p9_shape_calculator::{Circle, Rectangle, Triangle, print_aggregate_info, print_shape_info};
 
 fn main() {
     println!("=== Geometric Shape Calculator ===\n");
@@ -18,4 +18,16 @@ fn main() {
         c: 5.0,
     };
     print_shape_info(&triangle);
+
+    let shapes = vec![
+        Rectangle {
+            width: 4.0,
+            height: 6.0,
+        },
+        Rectangle {
+            width: 4.0,
+            height: 6.0,
+        },
+    ];
+    print_aggregate_info(&shapes);
 }
