@@ -41,7 +41,7 @@ The application defines a unified geometric interface (Shape) implemented by var
 * Language Features:
     * Traits & Contracts: Polymorphic behavior abstractions without runtime overhead.
     * Static Dispatch: Generic monomorphization generating zero-cost specialized machine code at compile time.
-    * Trait Bounds: Restricting generic types using syntax like `<T: + Display Shape>`.
+    * Trait Bounds: Restricting generic types using syntax like `<T: Display + Shape>`.
     * Generics & Slices: Operating over slices of unknown concrete types that conform to trait contracts.
 
 ## 🚀 Building & Running

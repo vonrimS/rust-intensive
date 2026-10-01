@@ -91,9 +91,9 @@ impl Display for Triangle {
 
 /// Print formatted information about a shape to standard output.
 pub fn print_shape_info<T: Display + Shape>(shape: &T) {
-    print!("--- {} ---", shape);
-    print!("Area:       {:.2}", shape.area());
-    print!("Perimeter:  {:.2}\n", shape.perimeter());
+    println!("--- {} ---", shape);
+    println!("Area:       {:.2}", shape.area());
+    println!("Perimeter:  {:.2}\n", shape.perimeter());
 }
 
 /// Computes the combined total area of a slice of homogeneous shapes using static dispatch.
