@@ -131,3 +131,76 @@ impl BankAccount {
         self.is_locked = false;
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_new_account_success() {
+        let account = BankAccount::new("ACC-001".to_string(), 100.0).unwrap();
+        assert_eq!(account.balance(), 100.0);
+        assert_eq!(account.is_locked, false);
+        assert_eq!(account.last_transaction(), None);
+    }
+
+    #[test]
+    fn test_deposits() {
+        let mut account = BankAccount::new("112-113".to_string(), 100.0).unwrap();
+        account.deposit(100.0);
+        assert_eq!(account.balance(), 200.0);
+    }
+
+    #[test]
+    fn test_withdrawal() {
+        let mut account = BankAccount::new("123-456".to_string(), 100.0).unwrap();
+        account.withdraw(50.0);
+        assert_eq!(account.balance(), 50.0);
+    }
+
+    #[test]
+    fn test_insufficient_funds() {
+        let mut account = BankAccount::new("123-456".to_string(), 100.0).unwrap();
+        assert_eq!(
+            account.withdraw(110.0),
+            Err(AccountError::InsufficientFunds {
+                balance: 100.0,
+                requested: 110.0
+            })
+        );
+    }
+
+    #[test]
+    fn test_invalid_amount_errors() {
+        let mut account = BankAccount::new("123-456".to_string(), 100.0).unwrap();
+
+        assert_eq!(account.deposit(0.0), Err(AccountError::InvalidAmount));
+        assert_eq!(account.deposit(-10.0), Err(AccountError::InvalidAmount));
+        assert_eq!(account.withdraw(0.0), Err(AccountError::InvalidAmount));
+        assert_eq!(account.withdraw(-10.0), Err(AccountError::InvalidAmount));
+    }
+
+    #[test]
+    fn test_insufficient_funds_errors() {
+        let mut account = BankAccount::new("123-456".to_string(), 100.0).unwrap();
+
+        assert_eq!(
+            account.withdraw(101.0),
+            Err(AccountError::InsufficientFunds {
+                balance: 100.0,
+                requested: 101.0
+            })
+        );
+    }
+
+    #[test]
+    fn test_locking_account() {
+        let mut account = BankAccount::new("123-456".to_string(), 100.0).unwrap();
+
+        account.lock();
+        assert_eq!(account.is_locked, true);
+
+        account.unlock();
+        assert_eq!(account.is_locked, false);
+    }
+}
