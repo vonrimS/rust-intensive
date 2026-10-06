@@ -51,6 +51,10 @@ name = "p1-hello-cli-formatter"
 version = "0.1.0"
 
 [[package]]
+name = "p10-safe-bank-account"
+version = "0.1.0"
+
+[[package]]
 name = "p2-temperature-converter"
 version = "0.1.0"
 
@@ -79,6 +83,10 @@ version = "0.1.0"
 
 [[package]]
 name = "p8-file-word-counter"
+version = "0.1.0"
+
+[[package]]
+name = "p9-shape-calculator"
 version = "0.1.0"
 
 [[package]]
