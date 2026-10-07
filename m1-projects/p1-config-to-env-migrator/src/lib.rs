@@ -5,6 +5,8 @@ use std::fs;
 use std::io;
 use std::path::Path;
 
+use serde_json::Value;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigratorError {
     IoError(String),
@@ -40,6 +42,7 @@ impl From<std::io::Error> for MigratorError {
     }
 }
 
+
 pub fn to_upper_snake_case(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
     let mut prev: Option<char> = None;
@@ -51,7 +54,6 @@ pub fn to_upper_snake_case(input: &str) -> String {
                     result.push('_');
                 }
             }
-
             c if c.is_uppercase() => {
                 if let Some(p) = prev {
                     if (p.is_lowercase() || p.is_numeric()) && !result.ends_with('_') {
@@ -72,6 +74,36 @@ pub fn to_upper_snake_case(input: &str) -> String {
     result.trim_matches('_').to_string()
 }
 
+pub fn flatten_json(value: &serde_json::Value, prefix: &str, acc: &mut Vec<(String, String)>) {
+    match value {
+        Value::Object(map) => {
+            for (key, val) in map {
+                let new_prefix = if prefix.is_empty() {
+                    key.clone()
+                } else {
+                    format!("{prefix}.{key}")
+                };
+                flatten_json(val, &new_prefix, acc);
+            }
+        }
+
+        Value::String(s) => {
+            acc.push((to_upper_snake_case(prefix), s.clone()));
+        }
+        Value::Number(n) => {
+            acc.push((to_upper_snake_case(prefix), n.to_string()));
+        }
+        Value::Bool(b) => {
+            acc.push((to_upper_snake_case(prefix), b.to_string()));
+        }
+        Value::Null => {
+            acc.push((to_upper_snake_case(prefix), String::new()));
+        }
+
+        Value::Array(_) => acc.push((to_upper_snake_case(prefix), value.to_string())),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -79,7 +111,7 @@ mod tests {
     #[test]
     fn test_to_upper_snake_cases() {
         let test1 = "some-test-1";
-        let test2 = "someTest1";
+        let test2 = "someTest_1";
         let test3 = "some__Test__1";
         let test4 = "_some__Test__1";
         let test5 = "_SOME_TEST_1_";
@@ -91,5 +123,40 @@ mod tests {
         assert_eq!(to_upper_snake_case(test3), res);
         assert_eq!(to_upper_snake_case(test4), res);
         assert_eq!(to_upper_snake_case(test5), res);
+    }
+
+    #[test]
+    fn test_flatten_json() {
+        let raw_json = r#"
+        {
+            "server": {
+                "host": "127.0.0.1",
+                "port": 8080
+            },
+            "database": {
+                "connectionUrl": "postgres://localhost/db",
+                "maxConnections": 20
+            }
+        }
+        "#;
+
+        let parsed: serde_json::Value = serde_json::from_str(raw_json).unwrap();
+        let mut acc = Vec::new();
+
+        flatten_json(&parsed, "", &mut acc);
+
+        let mut expected = vec![
+            (
+                "DATABASE_CONNECTION_URL".to_string(),
+                "postgres://localhost/db".to_string(),
+            ),
+            ("DATABASE_MAX_CONNECTIONS".to_string(), "20".to_string()),
+            ("SERVER_HOST".to_string(), "127.0.0.1".to_string()),
+            ("SERVER_PORT".to_string(), "8080".to_string()),
+        ];
+
+        expected.sort_by(|a, b| a.0.cmp(&b.0));
+
+        assert_eq!(acc, expected);
     }
 }
