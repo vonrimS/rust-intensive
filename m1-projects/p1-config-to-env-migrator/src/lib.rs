@@ -1,11 +1,5 @@
-use std::env::args;
-
-use std::fmt::{Display, Formatter};
-use std::fs;
-use std::io;
-use std::path::Path;
-
 use serde_json::Value;
+use std::fmt::{Display, Formatter};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigratorError {
@@ -41,7 +35,6 @@ impl From<std::io::Error> for MigratorError {
         MigratorError::IoError(err.to_string())
     }
 }
-
 
 pub fn to_upper_snake_case(input: &str) -> String {
     let mut result = String::with_capacity(input.len());
@@ -104,6 +97,28 @@ pub fn flatten_json(value: &serde_json::Value, prefix: &str, acc: &mut Vec<(Stri
     }
 }
 
+pub fn format_env_value(val: &str) -> String {
+    let needs_quots = val.contains([' ', '\t', '\n', '\r', '#', '=', '$', '"', '\\']);
+
+    if !needs_quots {
+        return val.to_string();
+    }
+
+    let mut res = String::with_capacity(val.len() + 8);
+    res.push('"');
+
+    for c in val.chars() {
+        match c {
+            '\\' => res.push_str("\\\\"),
+            '"' => res.push_str("\\\""),
+            _ => res.push(c),
+        }
+    }
+
+    res.push('"');
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -158,5 +173,13 @@ mod tests {
         expected.sort_by(|a, b| a.0.cmp(&b.0));
 
         assert_eq!(acc, expected);
+    }
+
+    #[test]
+    fn test_format_env_value() {
+        assert_eq!(format_env_value("hello"), String::from("hello"));
+        assert_eq!(format_env_value("hello world!"), String::from("\"hello world!\""));
+        assert_eq!(format_env_value("hello#world!"), String::from("\"hello#world!\""));
+        assert_eq!(format_env_value("say \"hello world!\""), String::from("\"say \\\"hello world!\\\"\""));
     }
 }
