@@ -119,6 +119,20 @@ pub fn format_env_value(val: &str) -> String {
     res
 }
 
+pub fn format_env_file(pairs: &[(String, String)]) -> String {
+    let mut res = String::with_capacity(pairs.len() * 40);
+
+    for (key, val) in pairs {
+        let formatted_val = format_env_value(val);
+        res.push_str(key);
+        res.push('=');
+        res.push_str(&formatted_val);
+        res.push('\n');
+    }
+
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -178,8 +192,37 @@ mod tests {
     #[test]
     fn test_format_env_value() {
         assert_eq!(format_env_value("hello"), String::from("hello"));
-        assert_eq!(format_env_value("hello world!"), String::from("\"hello world!\""));
-        assert_eq!(format_env_value("hello#world!"), String::from("\"hello#world!\""));
-        assert_eq!(format_env_value("say \"hello world!\""), String::from("\"say \\\"hello world!\\\"\""));
+        assert_eq!(
+            format_env_value("hello world!"),
+            String::from("\"hello world!\"")
+        );
+        assert_eq!(
+            format_env_value("hello#world!"),
+            String::from("\"hello#world!\"")
+        );
+        assert_eq!(
+            format_env_value("say \"hello world!\""),
+            String::from("\"say \\\"hello world!\\\"\"")
+        );
+    }
+
+    #[test]
+    fn test_format_env_file() {
+        let pairs = vec![
+            (
+                "DATABASE_URL".to_string(),
+                "postgres://localhost/db".to_string(),
+            ),
+            ("SERVER_PORT".to_string(), "8080".to_string()),
+            ("SECRET_KEY".to_string(), "my #secret key".to_string()),
+        ];
+
+        let expected = "\
+DATABASE_URL=postgres://localhost/db
+SERVER_PORT=8080
+SECRET_KEY=\"my #secret key\"
+";
+
+        assert_eq!(format_env_file(&pairs), expected);
     }
 }
