@@ -1,5 +1,6 @@
 use serde_json::Value;
 use std::fmt::{Display, Formatter};
+use std::path::Path;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum MigratorError {
@@ -133,6 +134,23 @@ pub fn format_env_file(pairs: &[(String, String)]) -> String {
     res
 }
 
+pub fn migrate_config(input_path: &Path) -> Result<String, MigratorError> {
+    let content = std::fs::read_to_string(input_path)?;
+
+    let parsed: serde_json::Value =
+        serde_json::from_str(&content).map_err(|e| MigratorError::ParseError {
+            line: e.line(),
+            message: e.to_string(),
+        })?;
+
+    let mut acc = Vec::new();
+    flatten_json(&parsed, "", &mut acc);
+
+    acc.sort_by(|a, b| a.0.cmp(&b.0));
+
+    Ok(format_env_file(&acc))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -224,5 +242,31 @@ SECRET_KEY=\"my #secret key\"
 ";
 
         assert_eq!(format_env_file(&pairs), expected);
+    }
+
+    #[test]
+    fn test_migrate_config() {
+        use std::io::Write;
+
+        let mut temp_file = tempfile::NamedTempFile::new().unwrap();
+        write!(
+            temp_file,
+            r#"{{
+                "app": {{
+                    "name": "My App",
+                    "port": 3000
+                }}
+            }}"#
+        )
+        .unwrap();
+
+        let result = migrate_config(temp_file.path()).unwrap();
+
+        let expected = "\
+APP_NAME=\"My App\"
+APP_PORT=3000
+";
+
+        assert_eq!(result, expected);
     }
 }
