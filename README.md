@@ -12,3 +12,5 @@ A hardcore, project-driven engineering track designed to master Rust for high-th
 * **M0-P8:** `file-word-counter` (`std::fs::File`, Streaming with `BufReader`, Basic I/O)
 * **M0-P9:** `shape-calculator` (`trait` definition, Static dispatch, Polymorphism basics)
 * **M0-P10:** `safe-bank-account` (Encapsulation with private fields `pub`, Bounds checking with `Option`/`Result`)
+
+* **M1-P1:** `config-to-env-migrator` (CLI, Fast Parser, String Manipulation)
