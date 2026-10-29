@@ -46,15 +46,15 @@ impl From<std::io::Error> for MigratorError {
 
 /// Converts an arbitrary string (kebab-case, camelCase, dot.notation)
 /// into `UPPER_SNAKE_CASE` format.
-/// 
+///
 /// # Optimization
 /// Allocates memory up front using `String::with_capacity` matching the exact length
 /// of the input string to avoid redundant heap reallocations during processing.
-/// 
+///
 /// # Examples
 /// ```rust
 /// use config_to_env_migrator::to_upper_snake_case;
-/// 
+///
 /// assert_eq!(to_upper_snake_case("server.maxConnections"), "SERVER_MAX_CONECTIONS");
 /// assert_eq!(to_upper_snake_case("app-name"), "APP_NAME");
 /// ```
@@ -94,9 +94,8 @@ pub fn to_upper_snake_case(input: &str) -> String {
     result.trim_matches('_').to_string()
 }
 
-
 /// Recursively flattens a nested JSON tree structure into a vector of key-value string pairs.
-/// 
+///
 /// # Arguments
 /// * `value` - eference to the current `serde_json::Value` node.
 /// * `prefix` - Current key path formatted in dot notation (e.g., `"server.db"`).
@@ -135,10 +134,10 @@ pub fn flatten_json(value: &serde_json::Value, prefix: &str, acc: &mut Vec<(Stri
 }
 
 /// Escapes an environment variable value in compliance with standard `.env` specs.
-/// 
+///
 /// Wraps values containing special characters (` `, `#`, `=`, `"`, etc.) in double quotes,
 /// escaping inner quotes `"` and backslashes `\`.
-/// 
+///
 /// # Performance
 /// Performs **exactly 1 allocation** using a single-pass character iterator without intermediate strings.
 pub fn format_env_value(val: &str) -> String {
@@ -166,9 +165,8 @@ pub fn format_env_value(val: &str) -> String {
     res
 }
 
-
 /// Formats a slice of key-value pairs into final `.env` file content.
-/// 
+///
 /// # Optimization
 /// Allocates a single output string buffer assuming ~40 bytes per line to avoid
 /// memory reallocations and unnecessary `format!` macro invocations in loop.
@@ -186,16 +184,15 @@ pub fn format_env_file(pairs: &[(String, String)]) -> String {
     res
 }
 
-
 /// Primary public facade entry point for the library.
-/// 
+///
 /// Executes the complete migration pipeline:
 /// 1. Reads raw file content from disk.
 /// 2. Parses JSON document structure.
 /// 3. Flattens keys and normalizes them into `UPPER_SNAKE_CASE`.
 /// 4. Sorts key-value pairs lexicographically for deterministic output</char>
 /// 5. Formats and returns the generated `.env` string.
-/// 
+///
 /// # Errors
 /// Returns [`MigratorError`] if file I/O fails or JSON content is malformed.
 pub fn migrate_config(input_path: &Path) -> Result<String, MigratorError> {
@@ -214,8 +211,6 @@ pub fn migrate_config(input_path: &Path) -> Result<String, MigratorError> {
 
     Ok(format_env_file(&acc))
 }
-
-
 
 #[cfg(test)]
 mod tests {

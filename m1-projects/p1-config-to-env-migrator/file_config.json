@@ -1,0 +1,12 @@
+{
+  "app": {
+    "name": "My Super App",
+    "port": 8080,
+    "debugMode": true
+  },
+  "database": {
+    "connection-url": "postgres://user:pass#123@localhost:5432/my_db",
+    "max_connections": 20
+  },
+  "features": ["auth", "logging", "metrics"]
+}
