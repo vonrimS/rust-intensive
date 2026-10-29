@@ -72,3 +72,20 @@ pub struct CadReport {
     /// Overall spatial bounding box of the drawing, if geometry is present.
     pub bounding_box: Option<BoundingBox>
 }
+
+
+pub fn parse_cad_file() {
+    unimplemented!()
+}
+
+fn detect_format() {
+    unimplemented!()
+}
+
+fn parse_ascii_dxf() {
+    unimplemented!()
+}
+
+fn calculate_bounding_box() {
+    unimplemented!()
+}
