@@ -76,31 +76,70 @@ pub fn parse_cad_file() {
 }
 
 /// Detects the CAD file format and version from its header content.
+/// Scans through the first sections of the DXF file looking for the `SECTION` marker
+/// and the `$ACADVER` system variable to extract the exact AutoCAD version code.
 fn detect_format(content: &str) -> Result<String, CadAnalyzerError> {
     let mut has_section = false;
-    let mut has_acadver = false;
+    let mut version_code = String::new();
 
-    // Look through the first 50 lines of the DXF text
-    for line in content.lines().take(50) {
-        let trimmed = line.trim();
 
-        if trimmed == "SECTION" {
+    let mut lines = content.lines();
+
+    // Iterate through lines in pairs (group code and value)
+    while let Some(code_line) = lines.next() {
+        let value_line = lines.next().unwrap_or("").trim();
+        let code = code_line.trim();
+ 
+        // 1. Check for valid DXF section start
+        if code == "0" && value_line == "SECTION" {
             has_section = true;
         }
 
-        if trimmed == "$ACADVER" {
-            has_acadver = true;
+        // 2. Look for the AutoCAD version variable
+        if code == "9" && value_line == "$ACADVER" {
+            let next_code = lines.next();
+            let next_value = lines.next();
+
+            // The version string is expected right after code '9' -> '$ACADVER'
+            if let (Some(nc), Some(nv)) = (next_code, next_value) {
+                if nc.trim() == "1" {
+                    version_code = nv.trim().to_string();
+                }
+            }
         }
     }
 
-    if has_section && has_acadver {
-        Ok("DXF (ASCII)".to_string())
+    // 3. Return the evaluated format report or fallback/error
+    if has_section && !version_code.is_empty() {
+        let readable_version = map_acad_version(&version_code);
+        Ok(format!("DXF (ASCII) - {} ({})", version_code, readable_version))
+    } else if has_section {
+        Ok ("DXF (ASCII) - Unknown Version".to_string())
     } else {
         Err(CadAnalyzerError::UnsupportedFormat(
-            "Unable to detect a valid ASCII DXF header in the file".to_string(),
+            "Unable to detect a valid ASCII DXF header in the file".to_string()
         ))
     }
 }
+
+
+/// Maps internal AutoCAD version codes to human-readable release names.
+fn map_acad_version(code: &str) -> &str {
+    match code {
+        "AC1006" => "AutoCAD R10",
+        "AC1009" => "AutoCAD R11/R12",
+        "AC1012" => "AutoCAD R13",
+        "AC1014" => "AutoCAD R14",
+        "AC1015" => "AutoCAD 2000",
+        "AC1018" => "AutoCAD 2004",
+        "AC1021" => "AutoCAD 2007",
+        "AC1024" => "AutoCAD 2010",
+        "AC1027" => "AutoCAD 2013",
+        "AC1032" => "AutoCAD 2018+",
+        _ => "AutoCAD (Unknown version)"
+    }
+}
+
 
 fn parse_ascii_dxf() {
     unimplemented!()
@@ -116,8 +155,7 @@ mod tests {
 
     #[test]
     fn test_detect_format_with_real_snippet() {
-        let sample_header = r#"
-        0
+        let sample_header = r#"0
         SECTION
         2
         HEADER
@@ -132,7 +170,7 @@ mod tests {
 
         let result = detect_format(sample_header);
         assert!(result.is_ok());
-        assert_eq!(result.unwrap(), "DXF (ASCII)");
+        assert_eq!(result.unwrap(), "DXF (ASCII) - AC1015 (AutoCAD 2000)");
     }
 
     #[test]
