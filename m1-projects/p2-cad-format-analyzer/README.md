@@ -7,6 +7,17 @@ The application reads binary or text-based CAD inputs, validates header signatur
 
 ---
 
+## Why CAD Format Analyzer?
+
+In engineering and manufacturing, teams often accumulate tens of thousands of legacy `.dxf` or CAD files from various contractors and clients. Manually inspecting these files to check layers, count primitives, or estimate bounding box dimensions (e.g., to check if a part fits a raw metal sheet) requires opening heavy CAD software like AutoCAD or SolidWorks, wasting hours of engineering time.
+
+`cad-format-analyzer` automates this process by providing:
+- **Instant Batch Auditing:** Instantly scan archives for format versions, layers, and structural metrics.
+- **Headless Bounding Box Calculation:** Compute overall spatial dimensions ($X_{min}, Y_{min} \rightarrow X_{max}, Y_{max}$) directly from raw geometry codes without rendering.
+- **Lightweight CI/CD Validation:** Programmatically reject invalid or unsupported CAD files before they reach production.
+
+---
+
 ## Technical Requirements
 
 1. **CLI & File I/O Interface:**
