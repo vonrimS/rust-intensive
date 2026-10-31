@@ -71,6 +71,66 @@ pub struct CadReport {
     pub bounding_box: Option<BoundingBox>,
 }
 
+/// Helper to accumulate spatial bounds during entity traversal.
+struct BoundingBoxAccumulator {
+    min_x: f64,
+    min_y: f64,
+    max_x: f64,
+    max_y: f64,
+    has_geometry: bool,
+}
+
+impl BoundingBoxAccumulator {
+    fn new() -> Self {
+        Self {
+            min_x: f64::MAX,
+            min_y: f64::MAX,
+            max_x: f64::MIN,
+            max_y: f64::MIN,
+            has_geometry: false,
+        }
+    }
+
+    /// Updates bounding box bounds based on DXF group code and value.
+    fn update(&mut self, code: &str, value: &str) {
+        if let Ok(val) = value.parse::<f64>() {
+            match code {
+                "10" | "11" => {
+                    self.min_x = self.min_x.min(val);
+                    self.max_x = self.max_x.max(val);
+                    self.has_geometry = true;
+                }
+                "20" | "21" => {
+                    self.min_y = self.min_y.min(val);
+                    self.max_y = self.max_y.max(val);
+                    self.has_geometry = true;
+                }
+                _ => {}
+            }
+        }
+    }
+
+    /// Finalizes the accumulation into an optional BoundingBox.
+    fn finalize(self) -> Option<BoundingBox> {
+        if self.has_geometry {
+            Some(BoundingBox {
+                min: Point3D {
+                    x: self.min_x,
+                    y: self.min_y,
+                    z: 0.0,
+                },
+                max: Point3D {
+                    x: self.max_x,
+                    y: self.max_y,
+                    z: 0.0,
+                },
+            })
+        } else {
+            None
+        }
+    }
+}
+
 pub fn parse_cad_file() {
     unimplemented!()
 }
@@ -82,14 +142,13 @@ fn detect_format(content: &str) -> Result<String, CadAnalyzerError> {
     let mut has_section = false;
     let mut version_code = String::new();
 
-
     let mut lines = content.lines();
 
     // Iterate through lines in pairs (group code and value)
     while let Some(code_line) = lines.next() {
         let value_line = lines.next().unwrap_or("").trim();
         let code = code_line.trim();
- 
+
         // 1. Check for valid DXF section start
         if code == "0" && value_line == "SECTION" {
             has_section = true;
@@ -101,10 +160,10 @@ fn detect_format(content: &str) -> Result<String, CadAnalyzerError> {
             let next_value = lines.next();
 
             // The version string is expected right after code '9' -> '$ACADVER'
-            if let (Some(nc), Some(nv)) = (next_code, next_value) {
-                if nc.trim() == "1" {
-                    version_code = nv.trim().to_string();
-                }
+            if let (Some(nc), Some(nv)) = (next_code, next_value)
+                && nc.trim() == "1"
+            {
+                version_code = nv.trim().to_string();
             }
         }
     }
@@ -112,16 +171,18 @@ fn detect_format(content: &str) -> Result<String, CadAnalyzerError> {
     // 3. Return the evaluated format report or fallback/error
     if has_section && !version_code.is_empty() {
         let readable_version = map_acad_version(&version_code);
-        Ok(format!("DXF (ASCII) - {} ({})", version_code, readable_version))
+        Ok(format!(
+            "DXF (ASCII) - {} ({})",
+            version_code, readable_version
+        ))
     } else if has_section {
-        Ok ("DXF (ASCII) - Unknown Version".to_string())
+        Ok("DXF (ASCII) - Unknown Version".to_string())
     } else {
         Err(CadAnalyzerError::UnsupportedFormat(
-            "Unable to detect a valid ASCII DXF header in the file".to_string()
+            "Unable to detect a valid ASCII DXF header in the file".to_string(),
         ))
     }
 }
-
 
 /// Maps internal AutoCAD version codes to human-readable release names.
 fn map_acad_version(code: &str) -> &str {
@@ -136,13 +197,80 @@ fn map_acad_version(code: &str) -> &str {
         "AC1024" => "AutoCAD 2010",
         "AC1027" => "AutoCAD 2013",
         "AC1032" => "AutoCAD 2018+",
-        _ => "AutoCAD (Unknown version)"
+        _ => "AutoCAD (Unknown version)",
     }
 }
 
+/// Parses an ASCII-encoded DXF file content, extracting version details,
+/// unique layer names, entity summaries, and overall spatial bounding boxes.
+fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
+    let format_version = detect_format(content)?;
 
-fn parse_ascii_dxf() {
-    unimplemented!()
+    let mut lines = content.lines();
+    let mut in_entities = false;
+
+    let mut line_count = 0;
+    let mut layers_set = std::collections::HashSet::new();
+    let mut bbox_acc = BoundingBoxAccumulator::new();
+
+    let mut current_entity = String::new();
+
+    // Iterate through lines in pairs (group code and value)
+    while let Some(code_line) = lines.next() {
+        let value_line = lines.next().unwrap_or("").trim();
+        let code = code_line.trim();
+
+        // 1. Detect start of ENTITIES section
+        if code == "2" && value_line == "ENTITIES" {
+            in_entities = true;
+            continue;
+        }
+
+        if in_entities {
+            // End of section
+            if code == "0" && value_line == "ENDSEC" {
+                in_entities = false;
+                continue;
+            }
+
+            // New entity boundary
+            if code == "0" {
+                current_entity = value_line.to_string();
+                if current_entity == "LINE" {
+                    line_count += 1;
+                }
+                continue;
+            }
+
+            // Track layer name if group code is '8'
+            if code == "8" && !value_line.is_empty() {
+                layers_set.insert(value_line.to_string());
+            }
+
+            // Delegate geometry aggregation for LINE entities
+            if current_entity == "LINE" {
+                bbox_acc.update(code, value_line);
+            }
+        }
+    }
+
+    // Convert layers set to sorted vector for deterministic reporting
+    let mut layers: Vec<String> = layers_set.into_iter().collect();
+    layers.sort();
+
+    Ok(CadReport {
+        file_name: "sample.dxf".to_string(),
+        format_version,
+        layers,
+        entities: EntitySummary {
+            lines: line_count,
+            arcs: 0,
+            circles: 0,
+            texts: 0,
+            other: 0,
+        },
+        bounding_box: bbox_acc.finalize(),
+    })
 }
 
 fn calculate_bounding_box() {
@@ -195,5 +323,54 @@ mod tests {
         let empty_sample = "";
         let result = detect_format(empty_sample);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_parse_ascii_dxf() {
+        let sample_dxf = r#"0
+        SECTION
+        2
+        HEADER
+        9
+        $ACADVER
+        1
+        AC1015
+        0
+        ENDSEC
+        0
+        SECTION
+        2
+        ENTITIES
+        0
+        LINE
+        8
+        Contour_Layer
+        10
+        0.0
+        20
+        0.0
+        11
+        100.0
+        21
+        50.0
+        0
+        ENDSEC
+        0
+        EOF"#;
+
+        let result = parse_ascii_dxf(sample_dxf);
+        assert!(result.is_ok());
+
+        let report = result.unwrap();
+        assert_eq!(report.format_version, "DXF (ASCII) - AC1015 (AutoCAD 2000)");
+        assert_eq!(report.entities.lines, 1);
+        assert_eq!(report.layers, vec!["Contour_Layer".to_string()]);
+
+        assert!(report.bounding_box.is_some());
+        let bbox = report.bounding_box.unwrap();
+        assert_eq!(bbox.min.x, 0.0);
+        assert_eq!(bbox.min.y, 0.0);
+        assert_eq!(bbox.max.x, 100.0);
+        assert_eq!(bbox.max.y, 50.0);
     }
 }
