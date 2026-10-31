@@ -1,4 +1,4 @@
-use std::fmt::{self, Display};
+use std::{fmt::{self, Display}, path::Path};
 
 /// Errors that can occur during CAD file analysis and parsing.
 #[derive(Debug)]
@@ -29,6 +29,7 @@ impl Display for CadAnalyzerError {
 impl std::error::Error for CadAnalyzerError {}
 
 /// Represents a point in 3D space with floating-point coordinates.
+#[derive(Debug)]
 pub struct Point3D {
     pub x: f64,
     pub y: f64,
@@ -36,6 +37,7 @@ pub struct Point3D {
 }
 
 /// Represents a 3D axis-aligned bounding box enclosing CAD geometry.
+#[derive(Debug)]
 pub struct BoundingBox {
     /// Minimun coordinates boundary (lower-left-back corner).
     pub min: Point3D,
@@ -44,6 +46,7 @@ pub struct BoundingBox {
 }
 
 /// Summary statistics counting the types of graphical entities in a CAD drawing.
+#[derive(Debug)]
 pub struct EntitySummary {
     /// Number of straight line segments.
     pub lines: usize,
@@ -58,6 +61,7 @@ pub struct EntitySummary {
 }
 
 /// Complete structural analysis report generated for a parsed CAD file.
+#[derive(Debug)]
 pub struct CadReport {
     /// Name of the inspected CAD file.
     pub file_name: String,
@@ -72,6 +76,7 @@ pub struct CadReport {
 }
 
 /// Helper to accumulate spatial bounds during entity traversal.
+#[derive(Debug)]
 struct BoundingBoxAccumulator {
     min_x: f64,
     min_y: f64,
@@ -131,9 +136,6 @@ impl BoundingBoxAccumulator {
     }
 }
 
-pub fn parse_cad_file() {
-    unimplemented!()
-}
 
 /// Detects the CAD file format and version from its header content.
 /// Scans through the first sections of the DXF file looking for the `SECTION` marker
@@ -273,9 +275,30 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
     })
 }
 
-fn calculate_bounding_box() {
-    unimplemented!()
+/// Public entry point to analyze any supported CAD file by its path.
+pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerError>{
+    let path_ref = path.as_ref();
+
+    // 1. Read file content safely
+    let content = std::fs::read_to_string(path_ref).map_err(|e| {
+        CadAnalyzerError::IoError(format!("Failed to read file '{}': {e}", path_ref.display()))
+    })?;
+
+    // 2. Extract file name for the report
+    let file_name = path_ref
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown.dxf".to_string());
+
+    // 3. Dispatch based on format (currently supporting ASCII DXF)
+    // In the future, we can check binary signatures or file extensions here (.dxf vs .step)
+    let mut report = parse_ascii_dxf(&content)?;
+    report.file_name = file_name;
+
+    Ok(report)        
 }
+
+
 
 #[cfg(test)]
 mod tests {
@@ -373,4 +396,71 @@ mod tests {
         assert_eq!(bbox.max.x, 100.0);
         assert_eq!(bbox.max.y, 50.0);
     }
+
+    #[test]
+    fn test_parse_cad_file_real_file() {
+        use std::fs;
+        use std::env;
+
+        let temp_dir = env::temp_dir();
+        let file_path = temp_dir.join("integration_test_sample.dxf");
+
+        let sample_content = r#"0
+        SECTION
+        2
+        HEADER
+        9
+        $ACADVER
+        1
+        AC1015
+        0
+        ENDSEC
+        0
+        SECTION
+        2
+        ENTITIES
+        0
+        LINE
+        8
+        Layer_1
+        10
+        10.0
+        20
+        20.0
+        11
+        30.0
+        21
+        40.0
+        0
+        ENDSEC
+        0
+        EOF"#;
+
+        fs::write(&file_path, sample_content).expect("Failed to create temporary test file");
+
+        let result = parse_cad_file(&file_path);
+        
+        let _ = fs::remove_file(&file_path);
+
+        assert!(result.is_ok());
+        let report = result.unwrap();
+        
+        assert_eq!(report.file_name, "integration_test_sample.dxf");
+        assert!(report.format_version.contains("AC1015"));
+        assert_eq!(report.entities.lines, 1);
+        assert_eq!(report.layers, vec!["Layer_1".to_string()]);
+    }
+
+    #[test]
+    fn test_parse_cad_file_not_found() {
+        let non_existent_path = "non_existent_cad_file_9999.dxf";
+        let result = parse_cad_file(non_existent_path);
+
+        assert!(result.is_err());
+        match result.unwrap_err() {
+            CadAnalyzerError::IoError(_) => {}
+            other => panic!("Expected IoError, got: {:?}", other),
+        }
+    }
+    
 }
