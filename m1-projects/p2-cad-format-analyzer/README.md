@@ -1,20 +1,22 @@
 # CAD Format Analyzer (`cad-format-analyzer`)
 
 ## Project Overview
-`cad-format-analyzer` is a lightweight Rust CLI tool and library designed to inspect, analyze, and extract structural metadata from CAD files (such as DXF, DWG headers, or STEP files). 
+`cad-format-analyzer` is a high-performance, lightweight Rust CLI tool and library designed for headless inspection, structural auditing, and geometric bounding box extraction from CAD files (such as 2D DXF and 3D STEP Part 21 files).
 
-The application reads binary or text-based CAD inputs, validates header signatures, parses structural elements (layers, entities, blocks, metadata tables), and produces detailed diagnostic reports in JSON or human-readable summary formats.
+Built with a focus on **CAD Interoperability (Zoo Ecosystem)**, the analyzer parses binary or text-based CAD inputs, validates header signatures, extracts structural metadata (layers, entity counts, units), and calculates spatial boundaries — all without launching heavy graphical CAD software.
 
 ---
 
-## Why CAD Format Analyzer?
+## Why CAD Format Analyzer? (Use Cases & Value)
 
-In engineering and manufacturing, teams often accumulate tens of thousands of legacy `.dxf` or CAD files from various contractors and clients. Manually inspecting these files to check layers, count primitives, or estimate bounding box dimensions (e.g., to check if a part fits a raw metal sheet) requires opening heavy CAD software like AutoCAD or SolidWorks, wasting hours of engineering time.
+In engineering, R&D, and manufacturing environments, teams often deal with thousands of legacy or third-party CAD files (`.dxf`, `.step`, `.dwg`). Manually inspecting these files in AutoCAD or SolidWorks wastes critical engineering time and risks crashing software on corrupted inputs.
 
-`cad-format-analyzer` automates this process by providing:
-- **Instant Batch Auditing:** Instantly scan archives for format versions, layers, and structural metrics.
-- **Headless Bounding Box Calculation:** Compute overall spatial dimensions ($X_{min}, Y_{min} \rightarrow X_{max}, Y_{max}$) directly from raw geometry codes without rendering.
-- **Lightweight CI/CD Validation:** Programmatically reject invalid or unsupported CAD files before they reach production.
+`cad-format-analyzer` acts as a **Swiss Army Knife for CAD Interoperability**, providing:
+
+1. **Headless Bounding Box Calculation:** Instantly extract 3D spatial boundaries ($X_{min}, Y_{min}, Z_{min} \rightarrow X_{max}, Y_{max}, Z_{max}$) to check if a part fits machine tables (e.g., CNC, laser cutters) or stock materials without rendering.
+2. **Resilient Legacy Data Auditing:** Built for "wild" archives. Features **Graceful Degradation** — recovers valid geometry and metadata from corrupted or incomplete files instead of panicking.
+3. **CI/CD Quality Control:** Automate pre-flight checks on supplier files: validate format versions, flag missing layer definitions, or reject non-compliant geometries before production.
+4. **2D & 3D Multi-Format Support:** Unifies parsing of 2D draft formats (ASCII/Binary DXF) and 3D solid models (STEP Part 21) under a single fast CLI interface.
 
 ---
 
@@ -29,29 +31,29 @@ In engineering and manufacturing, teams often accumulate tens of thousands of le
    - Handle filesystem operations gracefully, providing clean error messaging for missing files, unreadable paths, or invalid permissions.
 
 2. **Parsing & Metadata Extraction Engine:**
-   - Detect and validate file signatures and headers for target formats.
+   - Detect and validate file signatures and headers for target formats (DXF versions, STEP ISO 10303 headers).
    - Inspect structural components:
      - Header section flags, drawing units, and encoding details.
-     - Table definitions (layers, line types, coordinate systems).
-     - Entity counts and spatial bounding box metadata.
+     - Table definitions (layers, line types, missing layer references).
+     - Entity counts (`LINE`, `CIRCLE`, `ARC`, `TEXT`, STEP surface primitives) and spatial bounding box metadata.
    - Extract embedded text properties, block counts, and revision metadata.
 
-3. **Domain Error Handling:**
+3. **Domain Error Handling & Fault Tolerance:**
    - Define a custom `CadAnalyzerError` enum:
      - `IoError(String)`
      - `InvalidHeader(String)`
      - `ParseError { offset: usize, message: String }`
      - `UnsupportedFormat(String)`
-   - Implement `Display` and `std::error::Error` for `CadAnalyzerError`.
+   - Implement **Graceful Degradation**: recover partial metrics from malformed files and output non-fatal diagnostic warnings in verbose mode.
 
 4. **Architecture (`lib.rs` / `main.rs`):**
-   - Place binary parsers, signature detectors, metadata extractors, and report formatters in `src/lib.rs`.
+   - Place format detectors, stream parsers, entity accumulators, and report formatters in `src/lib.rs`.
    - Keep argument parsing, CLI feedback, and file I/O orchestration in `src/main.rs`.
 
 5. **Testing Suite:**
-   - Unit tests for header validation and binary tag decoding.
-   - Unit tests for metadata formatting and spatial bounds calculation.
-   - Integration tests covering end-to-end file analysis pipelines with sample CAD files.
+   - Unit tests for header validation and binary/text tag decoding.
+   - Unit tests for metadata formatting and spatial bounds calculation (`BoundingBoxAccumulator`).
+   - Integration tests covering real-world valid and corrupted CAD snippets.
 
 ---
 
@@ -66,9 +68,9 @@ In engineering and manufacturing, teams often accumulate tens of thousands of le
   - `std::env` for CLI argument evaluation
   - `std::fmt::{Display, Formatter}` for custom error and status formatting
 - **Core Rust Concepts:**
-  - **Memory Efficiency:** Minimal heap allocations when parsing binary buffers using slice references (`&[u8]`).
+  - **Memory Efficiency:** Minimal heap allocations when parsing text streams or binary buffers.
   - **Pattern Matching:** Byte signature detection and enum-driven state evaluation.
-  - **Error Propagation:** Strong domain error handling using standard Rust traits.
+  - **Error Propagation:** Strong domain error handling using standard Rust traits (`Display`, `std::error::Error`).
 
 ---
 
@@ -77,7 +79,7 @@ In engineering and manufacturing, teams often accumulate tens of thousands of le
 From the workspace root directory:
 
 ```bash
-# Build and analyze a CAD file with text summary output
+# Build and analyze a CAD file with text summary output 
 cargo run -p cad-format-analyzer -- -i sample.dxf
 
 # Export analysis report in JSON format to a file
@@ -91,12 +93,12 @@ cargo test -p cad-format-analyzer
 ```
 
 ## Expected Behavior Example
-
 Command:
 
 ```bash
 cargo run -p cad-format-analyzer -- -i sample.dxf
 ```
+
 Execution Output:
 
 ```bash
