@@ -1,25 +1,26 @@
-# CAD Format Analyzer (`cad-format-analyzer`)
+# CAD Format Analyzer & Estimator (`cad-format-analyzer`)
 
 ## Project Overview
-`cad-format-analyzer` is a high-performance, lightweight Rust CLI tool and library designed for headless inspection, structural auditing, and geometric bounding box extraction from ASCII DXF CAD files.
+`cad-format-analyzer` is a high-performance, lightweight Rust CLI tool and library designed for headless inspection, geometric auditing, and production pre-flight checks of ASCII DXF CAD files (such as sheet metal flat patterns from SolidWorks).
 
-Built with a focus on speed and reliability, the analyzer parses text-based CAD inputs, validates header signatures, extracts structural metadata (layers, header variables, block records, entity counts), and calculates spatial boundaries — all without launching heavy graphical CAD software.
+Built with a focus on speed and reliability, the analyzer parses text-based CAD inputs, validates header signatures, extracts structural metadata, calculates spatial boundaries, and computes the **total cutting perimeter** — all without launching heavy graphical CAD software.
 
 ---
 
 ## Why CAD Format Analyzer? (Use Cases & Value)
 
-In engineering, R&D, and manufacturing environments, teams often deal with legacy or third-party CAD files (`.dxf`). Manually inspecting these files in AutoCAD wastes critical engineering time and risks crashing software on corrupted inputs.
+In manufacturing and CNC cutting environments, teams often deal with unverified "wild" CAD files (`.dxf`) sent by customers. Manually inspecting these files wastes engineering time and risks software crashes.
 
-`cad-format-analyzer` acts as a **Swiss Army Knife for CAD Interoperability**, providing:
+`cad-format-analyzer` acts as a **Pre-flight & Cost Estimation Gatekeeper**, providing:
 
-1. **Headless Bounding Box Calculation:** Instantly extract 3D spatial boundaries ($X_{min}, Y_{min}, Z_{min} \rightarrow X_{max}, Y_{max}, Z_{max}$) to check if a part fits machine tables (e.g., CNC, laser cutters) or stock materials without rendering.
-2. **Resilient Data Auditing:** Built for "wild" archives, extracting valid geometry and metadata efficiently.
-3. **CI/CD Quality Control:** Automate pre-flight checks on supplier files: validate format versions, flag missing layer definitions, or inspect entity distributions before production.
+1. **Headless Bounding Box Calculation:** Instantly extract 3D spatial boundaries ($X_{min}, Y_{min} \rightarrow X_{max}, Y_{max}$) to check if a part fits machine beds (laser, plasma, waterjet) without rendering.
+2. **Total Cut Length (Perimeter) Extraction:** Automatically sum lengths of straight lines, arcs, and full circles to compute exact cutting metrics.
+3. **Cost & Production Estimation:** Provide rough preliminary cost estimations based on cutting distance and equipment tariffs.
+4. **CI/CD Quality Control:** Automate pre-flight checks on incoming orders: validate format versions, flag oversized parts, and inspect entity distributions before production.
 
 ---
 
-## Technical Requirements
+## Technical Requirements & Core Features
 
 1. **CLI & File I/O Interface:**
    - Parse command-line arguments:
@@ -27,38 +28,25 @@ In engineering, R&D, and manufacturing environments, teams often deal with legac
      - Output report path (`-o` / `--output`, optional)
      - Output format selector (`-f` / `--format`, defaults to `text`, supports `json`)
      - Verbose diagnostic mode (`-v` / `--verbose`)
-   - Handle filesystem operations gracefully, providing clean error messaging for missing files, unreadable paths, or invalid permissions.
 
-2. **Parsing & Metadata Extraction Engine:**
+2. **Parsing & Geometry Engine:**
    - Detect and validate file signatures and headers for ASCII DXF versions.
    - Inspect structural components:
-     - Header section variables count.
-     - Table definitions (unique layer names).
-     - Entity counts (`LINE`, etc.) and spatial bounding box metadata.
-     - Block record counts and analysis execution duration benchmarks.
+     - Header variables count and unique layer names.
+     - Entity counts (`LINE`, `ARC`, `CIRCLE`) and spatial bounding box metadata.
+     - **On-the-fly cut length accumulation** (precise math for lines, circles, and arcs).
 
 3. **Domain Error Handling:**
-   - Define a custom `CadAnalyzerError` enum:
-     - `IoError(String)`
-     - `InvalidHeader(String)`
-     - `ParseError { offset: usize, message: String }`
-     - `UnsupportedFormat(String)`
+   - Define a custom `CadAnalyzerError` enum (`IoError`, `InvalidHeader`, `ParseError`, `UnsupportedFormat`).
 
-4. **Architecture (`lib.rs` / `main.rs`):**
-   - Place format detectors, stream parsers, entity accumulators, and report logic in `src/lib.rs`.
-   - Keep argument parsing, CLI feedback, and file I/O orchestration in `src/main.rs`.
-
-5. **Testing Suite:**
-   - Unit tests for header validation and tag decoding.
-   - Unit tests for metadata formatting and spatial bounds calculation (`BoundingBoxAccumulator`).
+4. **Testing Suite:**
+   - Unit tests for header validation, entity parsing, and spatial bounds calculation (`GeometryAccumulator`).
 
 ---
 
 ## Tech Stack & Core Concepts
 
 - **Language & Edition:** Rust (Edition 2021)
-- **Dependencies:**
-  - `serde` / `serde_json` (if applicable for structured exports)
 - **Standard Library Usage:**
   - `std::fs` & `std::io` for buffered text reading and report writing
   - `std::path::Path` for path verification
@@ -66,7 +54,6 @@ In engineering, R&D, and manufacturing environments, teams often deal with legac
 - **Core Rust Concepts:**
   - **Memory Efficiency:** Single-pass streaming parsers with minimal heap allocations.
   - **Pattern Matching:** State-machine flag evaluation for DXF sections (`HEADER`, `BLOCKS`, `ENTITIES`).
-  - **Error Propagation:** Strong domain error handling using standard Rust traits.
 
 ---
 
