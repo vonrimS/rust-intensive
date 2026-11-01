@@ -128,13 +128,21 @@ fn main() {
             let output_content = match cli.format {
                 OutputFormat::Text => {
 
+                    let metrics_str = format!(
+                        "  - Header Variables: {}\n  - Defined Layers:   {}\n  - Total Entities:   {}\n  - Block Records:    {}",
+                        report.header_count,
+                        report.layers.len(),
+                        report.entities.lines,
+                        report.block_count
+                    );
+
                     let bbox_str = match report.bounding_box {
                         Some(bb) => format! (
-                            "min: ({:.2}, {:.2}, {:.2}), max: ({:.2}, {:.2}, {:.2})",
+                            "  - Min: (X: {:.2}, Y: {:.2}, Z: {:.2})\n  - Max: (X: {:.2}, Y: {:.2}, Z: {:.2})",
                             bb.min.x, bb.min.y, bb.min.z,
                             bb.max.x, bb.max.y, bb.max.z
                         ),
-                        None => "None (No geometry)".to_string(),
+                        None => "  - None (No geometry)".to_string(),
                     };
 
                     format!(
@@ -143,21 +151,45 @@ fn main() {
                          [+] Detected format: AutoCAD DXF (ASCII text)\n\
                          [+] Version: {}\n\n\
                          Summary Metrics:\n\
-                           - Defined Layers:   {:?}\n\
-                           - Lines Count:      {}\n\n\
+                         {}\n\n\
                          Bounding Box:\n\
-                         {}\n",
+                         {}\n\nAnalysis completed successfully in {:?}.\n",
                         report.file_name,
                         report.format_version,
-                        report.layers,
-                        report.entities.lines,
-                        bbox_str
+                        metrics_str,
+                        bbox_str,
+                        report.analysis_duration
                     )
                 }
+                
                 OutputFormat::Json => {
+                    let bbox_json = match &report.bounding_box {
+                        Some(bb) => format!(
+                            "{{\"min\": {{\"x\": {}, \"y\": {}, \"z\": {}}}, \"max\": {{\"x\": {}, \"y\": {}, \"z\": {}}}}}",
+                            bb.min.x, bb.min.y, bb.min.z, bb.max.x, bb.max.y, bb.max.z
+                        ),
+                        None => "null".to_string(),
+                    };
+
                     format!(
-                        "{{\n  \"file_name\": \"{}\",\n  \"format_version\": \"{}\",\n  \"lines_count\": {}\n}}",
-                        report.file_name, report.format_version, report.entities.lines
+                        "{{\n\
+                        \t\"file_name\": \"{}\",\n\
+                        \t\"format_version\": \"{}\",\n\
+                        \t\"header_count\": {},\n\
+                        \t\"defined_layers_count\": {},\n\
+                        \t\"lines_count\": {},\n\
+                        \t\"block_count\": {},\n\
+                        \t\"bounding_box\": {},\n\
+                        \t\"analysis_duration_ms\": {:.4}\n\
+                        }}",
+                        report.file_name,
+                        report.format_version,
+                        report.header_count,
+                        report.layers.len(),
+                        report.entities.lines,
+                        report.block_count,
+                        bbox_json,
+                        report.analysis_duration.as_secs_f64() * 1000.0
                     )
                 }
             };

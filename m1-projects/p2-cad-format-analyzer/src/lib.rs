@@ -70,12 +70,18 @@ pub struct CadReport {
     pub file_name: String,
     /// Format specification version (e.g., AutoCAD DXF version).
     pub format_version: String,
+    /// Number of header variables parsed from the drawing header section.
+    pub header_count: usize,
     /// Collection of unique layer names defined in the drawing.
     pub layers: Vec<String>,
     /// Aggregated count of graphical entities.
     pub entities: EntitySummary,
+    /// Number of block definitions (block records) present in the drawing.
+    pub block_count: usize,
     /// Overall spatial bounding box of the drawing, if geometry is present.
     pub bounding_box: Option<BoundingBox>,
+    /// Total duration elapsed during the CAD file parsing and analysis.
+    pub analysis_duration: std::time::Duration,
 }
 
 /// Helper to accumulate spatial bounds during entity traversal.
@@ -206,14 +212,23 @@ fn map_acad_version(code: &str) -> &str {
 }
 
 /// Parses an ASCII-encoded DXF file content, extracting version details,
-/// unique layer names, entity summaries, and overall spatial bounding boxes.
+/// header variables count, block records count, unique layer names, 
+/// entity summaries, and overall spatial bounding boxes.
 fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
     let format_version = detect_format(content)?;
 
     let mut lines = content.lines();
+
+    // State flags for tracking active sections within the DXF file structure
+    let mut in_header = false;
+    let mut in_blocks = false;
     let mut in_entities = false;
 
+    // Acumulators for metrics and counters
+    let mut header_count = 0;
+    let mut block_count = 0;
     let mut line_count = 0;
+
     let mut layers_set = std::collections::HashSet::new();
     let mut bbox_acc = BoundingBoxAccumulator::new();
 
@@ -224,20 +239,43 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
         let value_line = lines.next().unwrap_or("").trim();
         let code = code_line.trim();
 
-        // 1. Detect start of ENTITIES section
-        if code == "2" && value_line == "ENTITIES" {
-            in_entities = true;
+        // Reset section flags upon encountering a new section boundary
+        if code == "0" && value_line == "SECTION" {
+            in_header = false;
+            in_blocks = false;
+            in_entities = false;
             continue;
         }
 
-        if in_entities {
-            // End of section
-            if code == "0" && value_line == "ENDSEC" {
-                in_entities = false;
-                continue;
-            }
+        // Identify the specific section name via group code '2'
+        if code == "2" {
+            in_header = value_line == "HEADER";
+            in_blocks = value_line == "BLOCKS";
+            in_entities = value_line == "ENTITIES";
+            continue;
+        }
 
-            // New entity boundary
+        // Terminate active section tracking on 'ENDSEC'
+        if code == "0" && value_line == "ENDSEC" {
+            in_header = false;
+            in_blocks = false;
+            in_entities = false;
+            continue;
+        }
+
+        // Count header variables (identified by group code '9' within the HEADER section) 
+        if in_header && code == "9" {
+            header_count += 1;
+        }
+
+        // Count block definitions (identified by 'BLOCK' entity type within the BLOCK section)
+        if in_blocks && code == "0" && value_line == "BLOCK" {
+            block_count += 1;
+        }
+
+        // Parse entities and geometry when inside the ENTITIES section
+        if in_entities {
+            // Track the start of a new graphical entity type
             if code == "0" {
                 current_entity = value_line.to_string();
                 if current_entity == "LINE" {
@@ -246,25 +284,26 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
                 continue;
             }
 
-            // Track layer name if group code is '8'
+            // Track unique layer names assigned via gropu code '8'
             if code == "8" && !value_line.is_empty() {
                 layers_set.insert(value_line.to_string());
             }
 
-            // Delegate geometry aggregation for LINE entities
+            // Aggregate spatial coordinates for LINE entities
             if current_entity == "LINE" {
                 bbox_acc.update(code, value_line);
             }
         }
     }
 
-    // Convert layers set to sorted vector for deterministic reporting
+    // Convert layers set to a sorted vector for deterministic and clean reporting
     let mut layers: Vec<String> = layers_set.into_iter().collect();
     layers.sort();
 
     Ok(CadReport {
-        file_name: "sample.dxf".to_string(),
+        file_name: String::new(),
         format_version,
+        header_count,
         layers,
         entities: EntitySummary {
             lines: line_count,
@@ -273,12 +312,15 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
             texts: 0,
             other: 0,
         },
+        block_count,
         bounding_box: bbox_acc.finalize(),
+        analysis_duration: std::time::Duration::default(),
     })
 }
 
 /// Public entry point to analyze any supported CAD file by its path.
 pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerError> {
+    let start_time = std::time::Instant::now();
     let path_ref = path.as_ref();
 
     // 1. Read file content safely
@@ -296,6 +338,7 @@ pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerE
     // In the future, we can check binary signatures or file extensions here (.dxf vs .step)
     let mut report = parse_ascii_dxf(&content)?;
     report.file_name = file_name;
+    report.analysis_duration = start_time.elapsed();
 
     Ok(report)
 }
