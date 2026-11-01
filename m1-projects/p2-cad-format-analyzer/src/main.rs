@@ -1,5 +1,7 @@
 use std::{
-    env, fs, path::PathBuf, process::{self},
+    env, fs,
+    path::PathBuf,
+    process::{self},
 };
 
 use p2_cad_format_analyzer::parse_cad_file;
@@ -127,20 +129,25 @@ fn main() {
         Ok(report) => {
             let output_content = match cli.format {
                 OutputFormat::Text => {
+                    let total_entities =
+                        report.entities.lines + report.entities.arcs + report.entities.circles;
 
                     let metrics_str = format!(
-                        "  - Header Variables: {}\n  - Defined Layers:   {}\n  - Total Entities:   {}\n  - Block Records:    {}",
+                        "  - Header Variables:   {}\n  - Defined Layers:     {}\n  - Total Entities:     {} (Lines: {}, Arcs: {}, Circles: {})\n  - Total Cut Length:   {:.2} mm\n  - Block Records:      {}",
                         report.header_count,
                         report.layers.len(),
+                        total_entities,
                         report.entities.lines,
+                        report.entities.arcs,
+                        report.entities.circles,
+                        report.total_cut_length,
                         report.block_count
                     );
 
                     let bbox_str = match report.bounding_box {
-                        Some(bb) => format! (
+                        Some(bb) => format!(
                             "  - Min: (X: {:.2}, Y: {:.2}, Z: {:.2})\n  - Max: (X: {:.2}, Y: {:.2}, Z: {:.2})",
-                            bb.min.x, bb.min.y, bb.min.z,
-                            bb.max.x, bb.max.y, bb.max.z
+                            bb.min.x, bb.min.y, bb.min.z, bb.max.x, bb.max.y, bb.max.z
                         ),
                         None => "  - None (No geometry)".to_string(),
                     };
@@ -161,7 +168,7 @@ fn main() {
                         report.analysis_duration
                     )
                 }
-                
+
                 OutputFormat::Json => {
                     let bbox_json = match &report.bounding_box {
                         Some(bb) => format!(
@@ -177,7 +184,12 @@ fn main() {
                         \t\"format_version\": \"{}\",\n\
                         \t\"header_count\": {},\n\
                         \t\"defined_layers_count\": {},\n\
-                        \t\"lines_count\": {},\n\
+                        \t\"entities\": {{\n\
+                        \t\t\"lines\": {},\n\
+                        \t\t\"arcs\": {},\n\
+                        \t\t\"circles\": {}\n\
+                        \t}},\n\
+                        \t\"total_cut_length_mm\": {:.2},\n\
                         \t\"block_count\": {},\n\
                         \t\"bounding_box\": {},\n\
                         \t\"analysis_duration_ms\": {:.4}\n\
@@ -187,6 +199,9 @@ fn main() {
                         report.header_count,
                         report.layers.len(),
                         report.entities.lines,
+                        report.entities.arcs,
+                        report.entities.circles,
+                        report.total_cut_length,
                         report.block_count,
                         bbox_json,
                         report.analysis_duration.as_secs_f64() * 1000.0

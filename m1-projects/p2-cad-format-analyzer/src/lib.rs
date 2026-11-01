@@ -1,4 +1,5 @@
 use std::{
+    collections::HashMap,
     fmt::{self, Display},
     path::Path,
 };
@@ -39,6 +40,123 @@ pub struct Point3D {
     pub z: f64,
 }
 
+/// Accumulates geometric entities (lines, arcs, circles) on the fly,
+/// calculating their precise cutting length and updating overall spatial boundaries.
+#[derive(Debug, Default)]
+pub struct GeometryAccumulator {
+    /// Accumulated total cut length (perimeter) across all parsed entities, in drawing units (mm).
+    pub total_cut_length: f64,
+    /// Total number of parsed straight line segments.
+    pub line_count: usize,
+    /// Total number of parsed full circles.
+    pub circle_count: usize,
+    /// Total number of parsed circular arcs.
+    pub arc_count: usize,
+    /// Minimum X coordinate of the bounding box.
+    pub min_x: f64,
+    /// Maximum X coordinate of the bounding box.
+    pub max_x: f64,
+    /// Minimum Y coordinate of the bounding box.
+    pub min_y: f64,
+    /// Maximum Y coordinate of the bounding box.
+    pub max_y: f64,
+    /// Internal flag indicating whether valid geometry entities were found.
+    pub has_geometry: bool,
+}
+
+impl GeometryAccumulator {
+    /// Creates a new instance of `GeometryAccumulator` with initialized extreme boundary states.
+    pub fn new() -> Self {
+        Self {
+            total_cut_length: 0.0,
+            line_count: 0,
+            circle_count: 0,
+            arc_count: 0,
+            min_x: f64::MAX,
+            max_x: f64::MIN,
+            min_y: f64::MAX,
+            max_y: f64::MIN,
+            has_geometry: false,
+        }
+    }
+
+    /// Processes a straight line segment, updating total cut length and bounding box limits.
+    pub fn add_line(&mut self, x1: f64, y1: f64, x2: f64, y2: f64) {
+        let length = ((x2 - x1).powi(2) + (y2 - y1).powi(2)).sqrt();
+        self.total_cut_length += length;
+        self.line_count += 1;
+
+        self.update_bounds(x1, y1);
+        self.update_bounds(x2, y2);
+        self.has_geometry = true;
+    }
+
+    /// Processes a full circle, calculating its circumference and expanding bounding box limits.
+    pub fn add_circle(&mut self, cx: f64, cy: f64, radius: f64) {
+        let length = 2.0 * std::f64::consts::PI * radius;
+        self.total_cut_length += length;
+        self.circle_count += 1;
+
+        self.update_bounds(cx - radius, cy - radius);
+        self.update_bounds(cx + radius, cy + radius);
+        self.has_geometry = true;
+    }
+
+    /// Processes a circular arc, calculating its curved length based on start and end angles,
+    /// and expanding bounding box limits.
+    pub fn add_arc(&mut self, cx: f64, cy: f64, radius: f64, start_deg: f64, end_deg: f64) {
+        let mut angle_diff = end_deg - start_deg;
+        if angle_diff < 0.0 {
+            angle_diff += 360.0;
+        }
+        let rad = angle_diff.to_radians();
+        let length = radius * rad;
+
+        self.total_cut_length += length;
+        self.arc_count += 1;
+
+        self.update_bounds(cx - radius, cy - radius);
+        self.update_bounds(cx + radius, cy + radius);
+        self.has_geometry = true;
+    }
+
+    /// Internal helper to expand the bounding box extremes.
+    fn update_bounds(&mut self, x: f64, y: f64) {
+        if x < self.min_x {
+            self.min_x = x;
+        }
+        if x > self.max_x {
+            self.max_x = x;
+        }
+        if y < self.min_y {
+            self.min_y = y;
+        }
+        if y > self.max_y {
+            self.max_y = y;
+        }
+    }
+
+    /// Finalizes accumulation into an optional `BoundingBox`.
+    pub fn finalize_bounding_box(self) -> Option<BoundingBox> {
+        if self.has_geometry {
+            Some(BoundingBox {
+                min: Point3D {
+                    x: self.min_x,
+                    y: self.min_y,
+                    z: 0.0,
+                },
+                max: Point3D {
+                    x: self.max_x,
+                    y: self.max_y,
+                    z: 0.0,
+                },
+            })
+        } else {
+            None
+        }
+    }
+}
+
 /// Represents a 3D axis-aligned bounding box enclosing CAD geometry.
 #[derive(Debug)]
 pub struct BoundingBox {
@@ -76,73 +194,14 @@ pub struct CadReport {
     pub layers: Vec<String>,
     /// Aggregated count of graphical entities.
     pub entities: EntitySummary,
+    /// Total calculated cutting perimeter/length across all supported entities (mm).
+    pub total_cut_length: f64,
     /// Number of block definitions (block records) present in the drawing.
     pub block_count: usize,
     /// Overall spatial bounding box of the drawing, if geometry is present.
     pub bounding_box: Option<BoundingBox>,
     /// Total duration elapsed during the CAD file parsing and analysis.
     pub analysis_duration: std::time::Duration,
-}
-
-/// Helper to accumulate spatial bounds during entity traversal.
-#[derive(Debug)]
-struct BoundingBoxAccumulator {
-    min_x: f64,
-    min_y: f64,
-    max_x: f64,
-    max_y: f64,
-    has_geometry: bool,
-}
-
-impl BoundingBoxAccumulator {
-    fn new() -> Self {
-        Self {
-            min_x: f64::MAX,
-            min_y: f64::MAX,
-            max_x: f64::MIN,
-            max_y: f64::MIN,
-            has_geometry: false,
-        }
-    }
-
-    /// Updates bounding box bounds based on DXF group code and value.
-    fn update(&mut self, code: &str, value: &str) {
-        if let Ok(val) = value.parse::<f64>() {
-            match code {
-                "10" | "11" => {
-                    self.min_x = self.min_x.min(val);
-                    self.max_x = self.max_x.max(val);
-                    self.has_geometry = true;
-                }
-                "20" | "21" => {
-                    self.min_y = self.min_y.min(val);
-                    self.max_y = self.max_y.max(val);
-                    self.has_geometry = true;
-                }
-                _ => {}
-            }
-        }
-    }
-
-    /// Finalizes the accumulation into an optional BoundingBox.
-    fn finalize(self) -> Option<BoundingBox> {
-        if self.has_geometry {
-            Some(BoundingBox {
-                min: Point3D {
-                    x: self.min_x,
-                    y: self.min_y,
-                    z: 0.0,
-                },
-                max: Point3D {
-                    x: self.max_x,
-                    y: self.max_y,
-                    z: 0.0,
-                },
-            })
-        } else {
-            None
-        }
-    }
 }
 
 /// Detects the CAD file format and version from its header content.
@@ -212,7 +271,7 @@ fn map_acad_version(code: &str) -> &str {
 }
 
 /// Parses an ASCII-encoded DXF file content, extracting version details,
-/// header variables count, block records count, unique layer names, 
+/// header variables count, block records count, unique layer names,
 /// entity summaries, and overall spatial bounding boxes.
 fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
     let format_version = detect_format(content)?;
@@ -227,12 +286,14 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
     // Acumulators for metrics and counters
     let mut header_count = 0;
     let mut block_count = 0;
-    let mut line_count = 0;
 
     let mut layers_set = std::collections::HashSet::new();
-    let mut bbox_acc = BoundingBoxAccumulator::new();
+    let mut geom_acc = GeometryAccumulator::new();
 
     let mut current_entity = String::new();
+
+    // Temporary storage for entity parameters during iteration
+    let mut entity_data: HashMap<String, String> = HashMap::new();
 
     // Iterate through lines in pairs (group code and value)
     while let Some(code_line) = lines.next() {
@@ -263,7 +324,7 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
             continue;
         }
 
-        // Count header variables (identified by group code '9' within the HEADER section) 
+        // Count header variables (identified by group code '9' within the HEADER section)
         if in_header && code == "9" {
             header_count += 1;
         }
@@ -277,10 +338,11 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
         if in_entities {
             // Track the start of a new graphical entity type
             if code == "0" {
+                // Before switching to a new entity, commit the previous one if applicable
+                process_entity(&current_entity, &entity_data, &mut geom_acc);
+
                 current_entity = value_line.to_string();
-                if current_entity == "LINE" {
-                    line_count += 1;
-                }
+                entity_data.clear();
                 continue;
             }
 
@@ -289,14 +351,13 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
                 layers_set.insert(value_line.to_string());
             }
 
-            // Aggregate spatial coordinates for LINE entities
-            if current_entity == "LINE" {
-                bbox_acc.update(code, value_line);
-            }
+            entity_data.insert(code.to_string(), value_line.to_string());
         }
     }
 
-    // Convert layers set to a sorted vector for deterministic and clean reporting
+    // Process the final entity in the stream
+    process_entity(&current_entity, &entity_data, &mut geom_acc);
+
     let mut layers: Vec<String> = layers_set.into_iter().collect();
     layers.sort();
 
@@ -306,16 +367,49 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
         header_count,
         layers,
         entities: EntitySummary {
-            lines: line_count,
-            arcs: 0,
-            circles: 0,
+            lines: geom_acc.line_count,
+            arcs: geom_acc.arc_count,
+            circles: geom_acc.circle_count,
             texts: 0,
             other: 0,
         },
+        total_cut_length: geom_acc.total_cut_length,
         block_count,
-        bounding_box: bbox_acc.finalize(),
+        bounding_box: geom_acc.finalize_bounding_box(),
         analysis_duration: std::time::Duration::default(),
     })
+}
+
+/// Helper function to extract numerical coordinates/parameters based on entity type and pass to accumulator.
+fn process_entity(
+    entity_type: &str,
+    data: &std::collections::HashMap<String, String>,
+    acc: &mut GeometryAccumulator,
+) {
+    match entity_type {
+        "LINE" => {
+            let x1 = data.get("10").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let y1 = data.get("20").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let x2 = data.get("11").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let y2 = data.get("21").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            acc.add_line(x1, y1, x2, y2);
+        }
+        "CIRCLE" => {
+            let cx = data.get("10").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let cy = data.get("20").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let r = data.get("40").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            acc.add_circle(cx, cy, r);
+        }
+        "ARC" => {
+            let cx = data.get("10").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let cy = data.get("20").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let r = data.get("40").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let start = data.get("50").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            let end = data.get("51").and_then(|v| v.parse().ok()).unwrap_or(0.0);
+            acc.add_arc(cx, cy, r, start, end);
+        }
+        _ => {}
+    }
 }
 
 /// Public entry point to analyze any supported CAD file by its path.
