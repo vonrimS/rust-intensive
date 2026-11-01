@@ -1,4 +1,7 @@
-use std::{fmt::{self, Display}, path::Path};
+use std::{
+    fmt::{self, Display},
+    path::Path,
+};
 
 /// Errors that can occur during CAD file analysis and parsing.
 #[derive(Debug)]
@@ -135,7 +138,6 @@ impl BoundingBoxAccumulator {
         }
     }
 }
-
 
 /// Detects the CAD file format and version from its header content.
 /// Scans through the first sections of the DXF file looking for the `SECTION` marker
@@ -276,7 +278,7 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
 }
 
 /// Public entry point to analyze any supported CAD file by its path.
-pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerError>{
+pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerError> {
     let path_ref = path.as_ref();
 
     // 1. Read file content safely
@@ -295,10 +297,8 @@ pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerE
     let mut report = parse_ascii_dxf(&content)?;
     report.file_name = file_name;
 
-    Ok(report)        
+    Ok(report)
 }
-
-
 
 #[cfg(test)]
 mod tests {
@@ -399,8 +399,8 @@ mod tests {
 
     #[test]
     fn test_parse_cad_file_real_file() {
-        use std::fs;
         use std::env;
+        use std::fs;
 
         let temp_dir = env::temp_dir();
         let file_path = temp_dir.join("integration_test_sample.dxf");
@@ -439,12 +439,12 @@ mod tests {
         fs::write(&file_path, sample_content).expect("Failed to create temporary test file");
 
         let result = parse_cad_file(&file_path);
-        
+
         let _ = fs::remove_file(&file_path);
 
         assert!(result.is_ok());
         let report = result.unwrap();
-        
+
         assert_eq!(report.file_name, "integration_test_sample.dxf");
         assert!(report.format_version.contains("AC1015"));
         assert_eq!(report.entities.lines, 1);
@@ -462,5 +462,4 @@ mod tests {
             other => panic!("Expected IoError, got: {:?}", other),
         }
     }
-    
 }
