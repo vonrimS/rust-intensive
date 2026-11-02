@@ -1,100 +1,88 @@
 # CAD Format Analyzer & Estimator (`cad-format-analyzer`)
 
 ## Project Overview
-`cad-format-analyzer` is a high-performance, lightweight Rust CLI tool and library designed for headless inspection, geometric auditing, and production pre-flight checks of ASCII DXF CAD files (such as sheet metal flat patterns from SolidWorks).
+`cad-format-analyzer` is a high-performance, lightweight Rust CLI tool and library designed as an automated **Production Gatekeeper** for CNC manufacturing pipelines (laser, plasma, waterjet cutting). 
 
-Built with a focus on speed and reliability, the analyzer parses text-based CAD inputs, validates header signatures, extracts structural metadata, calculates spatial boundaries, and computes the **total cutting perimeter** — all without launching heavy graphical CAD software.
-
----
-
-## Why CAD Format Analyzer? (Use Cases & Value)
-
-In manufacturing and CNC cutting environments, teams often deal with unverified "wild" CAD files (`.dxf`) sent by customers. Manually inspecting these files wastes engineering time and risks software crashes.
-
-`cad-format-analyzer` acts as a **Pre-flight & Cost Estimation Gatekeeper**, providing:
-
-1. **Headless Bounding Box Calculation:** Instantly extract 3D spatial boundaries ($X_{min}, Y_{min} \rightarrow X_{max}, Y_{max}$) to check if a part fits machine beds (laser, plasma, waterjet) without rendering.
-2. **Total Cut Length (Perimeter) Extraction:** Automatically sum lengths of straight lines, arcs, and full circles to compute exact cutting metrics.
-3. **Cost & Production Estimation:** Provide rough preliminary cost estimations based on cutting distance and equipment tariffs.
-4. **CI/CD Quality Control:** Automate pre-flight checks on incoming orders: validate format versions, flag oversized parts, and inspect entity distributions before production.
+Instead of relying on human guesswork or heavy CAD GUI software, the analyzer performs fast, headless pre-flight checks on untrusted ("wild") customer ASCII DXF files, returning deterministic pass/fail verdicts and standard exit codes.
 
 ---
 
-## Technical Requirements & Core Features
+## Core Philosophy: The Gatekeeper Pattern
 
-1. **CLI & File I/O Interface:**
-   - Parse command-line arguments:
-     - Input CAD file path (`-i` / `--input`)
-     - Output report path (`-o` / `--output`, optional)
-     - Output format selector (`-f` / `--format`, defaults to `text`, supports `json`)
-     - Verbose diagnostic mode (`-v` / `--verbose`)
+In automated sheet metal manufacturing, unverified CAD files often cause machine crashes, scrap material, or broken production queues. `cad-format-analyzer` acts as a strict inspector at the entry point of the pipeline:
 
-2. **Parsing & Geometry Engine:**
-   - Detect and validate file signatures and headers for ASCII DXF versions.
-   - Inspect structural components:
-     - Header variables count and unique layer names.
-     - Entity counts (`LINE`, `ARC`, `CIRCLE`) and spatial bounding box metadata.
-     - **On-the-fly cut length accumulation** (precise math for lines, circles, and arcs).
-
-3. **Domain Error Handling:**
-   - Define a custom `CadAnalyzerError` enum (`IoError`, `InvalidHeader`, `ParseError`, `UnsupportedFormat`).
-
-4. **Testing Suite:**
-   - Unit tests for header validation, entity parsing, and spatial bounds calculation (`GeometryAccumulator`).
+- **No auto-repair:** Bad files are rejected immediately rather than silently fixed.
+- **Unified Classification (`ClassificationResult`):** Every processed file is categorized into one of three standard outcomes:
+  1. **`Passed` (Exit Code `0`):** File is geometrically valid and fits within machine bed/sheet limits. Total cutting perimeter (`total_cut_length`) is computed for cost estimation.
+  2. **`OutOfBound` (Exit Code `2`):** File is valid DXF, but part dimensions ($Width \times Height$) exceed physical bed boundaries.
+  3. **`Corrupted` (Exit Code `1`):** File is unreadable, has invalid DXF syntax, or contains no geometry entities.
 
 ---
 
-## Tech Stack & Core Concepts
+## Architecture & Performance
 
-- **Language & Edition:** Rust (Edition 2021)
-- **Standard Library Usage:**
-  - `std::fs` & `std::io` for buffered text reading and report writing
-  - `std::path::Path` for path verification
-  - `std::time::Instant` for high-precision analysis benchmarking
-- **Core Rust Concepts:**
-  - **Memory Efficiency:** Single-pass streaming parsers with minimal heap allocations.
-  - **Pattern Matching:** State-machine flag evaluation for DXF sections (`HEADER`, `BLOCKS`, `ENTITIES`).
+- **Single-Pass Parsing:** Reads and parses the file from disk once into a `CadReport` structure.
+- **In-Memory Classification (`classify_report`):** Business logic operates strictly on in-memory reports without redundant I/O operations, ensuring sub-millisecond classification per file.
+- **CI/CD & Script Integration:** Native support for standard exit codes enables seamless integration into automated bash scripts, ERP systems, and CI/CD pipelines.
 
 ---
 
-## Building & Running
+## CLI Usage
 
-From the workspace root directory:
+### Basic Commands
 
 ```bash
-# Build and analyze a CAD file with text summary output 
-cargo run -p cad-format-analyzer -- -i test_data/sample.DXF
+# Inspect a CAD file with text report output
+cargo run -p p2-cad-format-analyzer -- -i test_data/sample.DXF
 
-# Export analysis report in JSON format to a file
-cargo run -p cad-format-analyzer -- -i test_data/sample.DXF -o report.json -f json
+# Output result as JSON for automated downstream services
+cargo run -p p2-cad-format-analyzer -- -i test_data/sample.DXF -f json
 
-# Run unit tests
-cargo test -p cad-format-analyzer
+# Save report directly to a file
+cargo run -p p2-cad-format-analyzer -- -i test_data/sample.DXF -o verdict.json -f json
+
+# Run test suite
+cargo test -p p2-cad-format-analyzer
 ```
 
-## Expected Behavior Example
+## Output Examples
 
-Command:
-```bash
-cargo run -p cad-format-analyzer -- -i test_data/sample.DXF
-```
-Execution Output:
+### Text Output (Out of Bound Verdict)
 ```bash
 === CAD Format Analyzer Report ===
 
-[+] Analyzing input file: sample.DXF
-[+] Detected format: AutoCAD DXF (ASCII text)
-[+] Version: DXF (ASCII) - AC1015 (AutoCAD 2000)
-
-Summary Metrics:
-  - Header Variables: 60
-  - Defined Layers:   1
-  - Total Entities:   21
-  - Block Records:    1
-
-Bounding Box:
-  - Min: (X: 33.43, Y: 760.41, Z: 0.00)
-  - Max: (X: 494.57, Y: 869.50, Z: 0.00)
-
-Analysis completed successfully in 1.9278ms.
+[+] Inspected file: sample.DXF
+[+] Gatekeeper Verdict: [OUT OF BOUND] Exceeds machine bed limits (3000x1500mm)
+  - Part Dimensions: 6008.0 x 6083.5 mm
+  - Reason: Part dimensions (6008.0x6083.5 mm) exceed machine limits (3000x1500 mm)
 ```
+(Process exits with code 2)
+
+```bash
+=== CAD Format Analyzer Report ===
+
+[+] Inspected file: sample.DXF
+[+] Gatekeeper Verdict: [PASSED] Ready for production
+  - Assigned Sheet: Mock Bed (10000x7500 mm)
+  - Part Dimensions: 6008.0 x 6083.5 mm
+  - Total Cut Length: 1791.29 mm
+```
+
+### JSON Output (Passed Verdict)
+```json
+{
+  "file_name": "bracket.dxf",
+  "status": "PASSED",
+  "sheet_name": "Mock Bed (3000x1500 mm)",
+  "width": 1200.50,
+  "height": 800.00,
+  "cut_length_mm": 4350.25
+}
+```
+(Process exits with code 0)
+
+## Tech Stack & Core Concepts
+- Language: Rust (Edition 2021)
+- Zero Heavy Dependencies: Written with maximum focus on low overhead and fast compilation.
+- Domain Error Handling: Custom CadAnalyzerError enum for structured I/O and DXF parsing diagnostics.
+- Precision Math: Bounding box calculations and exact arc/circle perimeter integration.
