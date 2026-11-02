@@ -4,6 +4,26 @@ use std::{
     path::Path,
 };
 
+/// Detailed result of the CAD file classification by the production gatekeeper.
+#[derive(Debug, PartialEq)]
+pub enum ClassificationResult {
+    /// File is fully valid and fits within the machine/sheet limits.
+    Passed {
+        sheet_name: String,
+        cut_length: f64,
+        width: f64,
+        height: f64,
+    },
+    /// File is syntactically/geometrically valid, but exceeds machine bed limits.
+    OutOfBound {
+        reason: String,
+        width: f64,
+        height: f64,
+    },
+    /// File is corrupted, unreadable, or missing critical sections.
+    Corrupted { reason: String, offset: usize },
+}
+
 /// Errors that can occur during CAD file analysis and parsing.
 #[derive(Debug)]
 pub enum CadAnalyzerError {
@@ -437,6 +457,59 @@ pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerE
     Ok(report)
 }
 
+/// Compares a parsed CAD report against machine bed dimensions in memory.
+///
+/// Returns `Corrupted` if no bounding box/geometry is present,
+/// `OutOfBound` if dimensions exceed `max_x` / `max_y`,
+/// or `Passed` with cut metrics if it fits.
+pub fn classify_report(report: &CadReport, max_x: f64, max_y: f64) -> ClassificationResult {
+    let bbox = match &report.bounding_box {
+        Some(bb) => bb,
+        None => {
+            return ClassificationResult::Corrupted {
+                reason: "No geometry entities found in DXF file".to_string(),
+                offset: 0,
+            };
+        }
+    };
+
+    let width = bbox.max.x - bbox.min.x;
+    let height = bbox.max.y - bbox.min.y;
+
+    if width > max_x || height > max_y {
+        ClassificationResult::OutOfBound {
+            reason: format!(
+                "Part dimensions ({width:.1}x{height:.1} mm) exceed machine limits ({max_x}x{max_y} mm)"
+            ),
+            width,
+            height,
+        }
+    } else {
+        ClassificationResult::Passed {
+            sheet_name: format!("Mock Bed ({}x{} mm)", max_x, max_y),
+            cut_length: report.total_cut_length,
+            width,
+            height,
+        }
+    }
+}
+
+/// Helper that reads and parses a CAD file from disk, then classifies it.
+///
+/// Converts any I/O or syntax parse error into `ClassificationResult::Corrupted`.
+pub fn classify_cad_file<P: AsRef<Path>>(path: P, max_x: f64, max_y: f64) -> ClassificationResult {
+    match parse_cad_file(path) {
+        Ok(report) => classify_report(&report, max_x, max_y),
+        Err(e) => ClassificationResult::Corrupted {
+            reason: e.to_string(),
+            offset: match e {
+                CadAnalyzerError::ParseError { offset, .. } => offset,
+                _ => 0,
+            },
+        },
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -597,6 +670,123 @@ mod tests {
         match result.unwrap_err() {
             CadAnalyzerError::IoError(_) => {}
             other => panic!("Expected IoError, got: {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classify_report_passed() {
+        let report = CadReport {
+            file_name: "part.dxf".to_string(),
+            format_version: "AC1015".to_string(),
+            header_count: 1,
+            layers: vec![],
+            entities: EntitySummary {
+                lines: 4,
+                arcs: 0,
+                circles: 0,
+                texts: 0,
+                other: 0,
+            },
+            total_cut_length: 400.0,
+            block_count: 0,
+            bounding_box: Some(BoundingBox {
+                min: Point3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                max: Point3D {
+                    x: 200.0,
+                    y: 100.0,
+                    z: 0.0,
+                },
+            }),
+            analysis_duration: std::time::Duration::default(),
+        };
+
+        let result = classify_report(&report, 3000.0, 1500.0);
+        match result {
+            ClassificationResult::Passed {
+                width,
+                height,
+                cut_length,
+                ..
+            } => {
+                assert_eq!(width, 200.0);
+                assert_eq!(height, 100.0);
+                assert_eq!(cut_length, 400.0);
+            }
+            other => panic!("Expected Passed, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classify_report_out_of_bound() {
+        let report = CadReport {
+            file_name: "huge_part.dxf".to_string(),
+            format_version: "AC1015".to_string(),
+            header_count: 1,
+            layers: vec![],
+            entities: EntitySummary {
+                lines: 4,
+                arcs: 0,
+                circles: 0,
+                texts: 0,
+                other: 0,
+            },
+            total_cut_length: 12000.0,
+            block_count: 0,
+            bounding_box: Some(BoundingBox {
+                min: Point3D {
+                    x: 0.0,
+                    y: 0.0,
+                    z: 0.0,
+                },
+                max: Point3D {
+                    x: 4000.0,
+                    y: 2000.0,
+                    z: 0.0,
+                },
+            }),
+            analysis_duration: std::time::Duration::default(),
+        };
+
+        let result = classify_report(&report, 3000.0, 1500.0);
+        match result {
+            ClassificationResult::OutOfBound { width, height, .. } => {
+                assert_eq!(width, 4000.0);
+                assert_eq!(height, 2000.0);
+            }
+            other => panic!("Expected OutOfBound, got {:?}", other),
+        }
+    }
+
+    #[test]
+    fn test_classify_report_corrupted_no_geometry() {
+        let report = CadReport {
+            file_name: "empty.dxf".to_string(),
+            format_version: "AC1015".to_string(),
+            header_count: 1,
+            layers: vec![],
+            entities: EntitySummary {
+                lines: 0,
+                arcs: 0,
+                circles: 0,
+                texts: 0,
+                other: 0,
+            },
+            total_cut_length: 0.0,
+            block_count: 0,
+            bounding_box: None,
+            analysis_duration: std::time::Duration::default(),
+        };
+
+        let result = classify_report(&report, 3000.0, 1500.0);
+        match result {
+            ClassificationResult::Corrupted { reason, .. } => {
+                assert!(reason.contains("No geometry entities found"));
+            }
+            other => panic!("Expected Corrupted, got {:?}", other),
         }
     }
 }

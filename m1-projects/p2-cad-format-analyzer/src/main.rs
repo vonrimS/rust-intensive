@@ -4,7 +4,7 @@ use std::{
     process::{self},
 };
 
-use p2_cad_format_analyzer::parse_cad_file;
+use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
 
 #[derive(Debug, PartialEq)]
 enum OutputFormat {
@@ -125,105 +125,115 @@ fn main() {
         println!("[+] Analyzing CAD file: {:?}", input_path);
     }
 
-    match parse_cad_file(&input_path) {
-        Ok(report) => {
-            let output_content = match cli.format {
-                OutputFormat::Text => {
-                    let total_entities =
-                        report.entities.lines + report.entities.arcs + report.entities.circles;
+    let max_bed_x = 10000.0;
+    let max_bed_y = 7500.0;
 
-                    let metrics_str = format!(
-                        "  - Header Variables:   {}\n  - Defined Layers:     {}\n  - Total Entities:     {} (Lines: {}, Arcs: {}, Circles: {})\n  - Total Cut Length:   {:.2} mm\n  - Block Records:      {}",
-                        report.header_count,
-                        report.layers.len(),
-                        total_entities,
-                        report.entities.lines,
-                        report.entities.arcs,
-                        report.entities.circles,
-                        report.total_cut_length,
-                        report.block_count
-                    );
+    let classification = classify_cad_file(&input_path, max_bed_x, max_bed_y);
 
-                    let bbox_str = match report.bounding_box {
-                        Some(bb) => format!(
-                            "  - Min: (X: {:.2}, Y: {:.2}, Z: {:.2})\n  - Max: (X: {:.2}, Y: {:.2}, Z: {:.2})",
-                            bb.min.x, bb.min.y, bb.min.z, bb.max.x, bb.max.y, bb.max.z
-                        ),
-                        None => "  - None (No geometry)".to_string(),
-                    };
+    let file_name = input_path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown.dxf".to_string());
 
+    let output_content = match cli.format {
+        OutputFormat::Text => {
+            let status_str = match &classification {
+                ClassificationResult::Passed {
+                    sheet_name,
+                    cut_length,
+                    width,
+                    height,
+                } => {
                     format!(
-                        "=== CAD Format Analyzer Report ===\n\n\
-                         [+] Analyzing input file: {}\n\
-                         [+] Detected format: AutoCAD DXF (ASCII text)\n\
-                         [+] Version: {}\n\n\
-                         Summary Metrics:\n\
-                         {}\n\n\
-                         Bounding Box:\n\
-                         {}\n\nAnalysis completed successfully in {:?}.\n",
-                        report.file_name,
-                        report.format_version,
-                        metrics_str,
-                        bbox_str,
-                        report.analysis_duration
+                        " [PASSED] Ready for production\n  - Assigned Sheet: {}\n  - Part Dimensions: {:.1} x {:.1} mm\n  - Total Cut Length: {:.2} mm",
+                        sheet_name, width, height, cut_length
                     )
                 }
-
-                OutputFormat::Json => {
-                    let bbox_json = match &report.bounding_box {
-                        Some(bb) => format!(
-                            "{{\"min\": {{\"x\": {}, \"y\": {}, \"z\": {}}}, \"max\": {{\"x\": {}, \"y\": {}, \"z\": {}}}}}",
-                            bb.min.x, bb.min.y, bb.min.z, bb.max.x, bb.max.y, bb.max.z
-                        ),
-                        None => "null".to_string(),
-                    };
-
+                ClassificationResult::OutOfBound {
+                    reason,
+                    width,
+                    height,
+                } => {
                     format!(
-                        "{{\n\
-                        \t\"file_name\": \"{}\",\n\
-                        \t\"format_version\": \"{}\",\n\
-                        \t\"header_count\": {},\n\
-                        \t\"defined_layers_count\": {},\n\
-                        \t\"entities\": {{\n\
-                        \t\t\"lines\": {},\n\
-                        \t\t\"arcs\": {},\n\
-                        \t\t\"circles\": {}\n\
-                        \t}},\n\
-                        \t\"total_cut_length_mm\": {:.2},\n\
-                        \t\"block_count\": {},\n\
-                        \t\"bounding_box\": {},\n\
-                        \t\"analysis_duration_ms\": {:.4}\n\
-                        }}",
-                        report.file_name,
-                        report.format_version,
-                        report.header_count,
-                        report.layers.len(),
-                        report.entities.lines,
-                        report.entities.arcs,
-                        report.entities.circles,
-                        report.total_cut_length,
-                        report.block_count,
-                        bbox_json,
-                        report.analysis_duration.as_secs_f64() * 1000.0
+                        " [OUT OF BOUND] Exceeds machine bed limits ({max_bed_x}x{max_bed_y}mm)\n  - Part Dimensions: {:.1} x {:.1} mm\n  - Reason: {}",
+                        width, height, reason
+                    )
+                }
+                ClassificationResult::Corrupted { reason, offset } => {
+                    format!(
+                        " [CORRUPTED] File rejected by gatekeeper\n  - Offset: {}\n  - Reason: {}",
+                        offset, reason
                     )
                 }
             };
 
-            if let Some(out_path) = cli.output_path {
-                if let Err(e) = fs::write(&out_path, &output_content) {
-                    eprintln!("Error writing to file '{out_path:?}': {e}");
-                    process::exit(1);
-                }
-                if cli.verbose {
-                    println!("[+] Report successfully saved to {:?}", out_path);
-                }
-            } else {
-                print!("{output_content}");
-            }
+            format!(
+                "=== CAD Format Analyzer Report ===\n\n\
+                 [+] Inspected file: {}\n\
+                 [+] Gatekeeper Verdict:{}\n\n",
+                file_name, status_str
+            )
         }
-        Err(err) => {
-            eprintln!("Analysis failed: {err}");
+
+        OutputFormat::Json => {
+            let (status_name, details_json) = match &classification {
+                ClassificationResult::Passed {
+                    sheet_name,
+                    cut_length,
+                    width,
+                    height,
+                } => (
+                    "PASSED",
+                    format!(
+                        "\"sheet_name\": \"{}\", \"width\": {:.2}, \"height\": {:.2}, \"cut_length_mm\": {:.2}",
+                        sheet_name, width, height, cut_length
+                    ),
+                ),
+                ClassificationResult::OutOfBound {
+                    reason,
+                    width,
+                    height,
+                } => (
+                    "OUT_OF_BOUND",
+                    format!(
+                        "\"width\": {:.2}, \"height\": {:.2}, \"reason\": \"{}\"",
+                        width, height, reason
+                    ),
+                ),
+                ClassificationResult::Corrupted { reason, offset } => (
+                    "CORRUPTED",
+                    format!("\"offset\": {}, \"reason\": \"{}\"", offset, reason),
+                ),
+            };
+
+            format!(
+                "{{\n\
+                \t\"file_name\": \"{}\",\n\
+                \t\"status\": \"{}\",\n\
+                \t{}\n\
+                }}",
+                file_name, status_name, details_json
+            )
+        }
+    };
+
+    // Запись в файл или печать в stdout
+    if let Some(out_path) = cli.output_path {
+        if let Err(e) = fs::write(&out_path, &output_content) {
+            eprintln!("Error writing to file '{out_path:?}': {e}");
             process::exit(1);
         }
+        if cli.verbose {
+            println!("[+] Report successfully saved to {:?}", out_path);
+        }
+    } else {
+        print!("{output_content}");
+    }
+
+    // Возвращаем код выхода в зависимости от статуса (полезно для CI/скриптов цеха)
+    match classification {
+        ClassificationResult::Passed { .. } => process::exit(0),
+        ClassificationResult::OutOfBound { .. } => process::exit(2),
+        ClassificationResult::Corrupted { .. } => process::exit(1),
     }
 }
