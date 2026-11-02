@@ -86,3 +86,21 @@ cargo test -p p2-cad-format-analyzer
 - Zero Heavy Dependencies: Written with maximum focus on low overhead and fast compilation.
 - Domain Error Handling: Custom CadAnalyzerError enum for structured I/O and DXF parsing diagnostics.
 - Precision Math: Bounding box calculations and exact arc/circle perimeter integration.
+
+---
+
+## Roadmap & Future Horizon
+
+The project is actively evolving from a single-file checker into a complete production automation system. Planned improvements include:
+
+1. **Batch Processing & Directory Inspection (`-d` / `--dir`):**
+   - Support scanning entire folders of incoming customer files with aggregate summary reports and pipeline manifests.
+
+2. **SQLite Database Integration:**
+   - Move from hardcoded mock dimensions (`3000x1500 mm`) to dynamic machine bed and sheet inventory lookup stored in a local SQLite store.
+
+3. **Smart Orientation & Minimal Bounding Box (OBB):**
+   - Implement convex hull and Rotating Calipers algorithms to compute Orientated Bounding Boxes (OBB). This will automatically evaluate whether rotated parts fit machine limits without requiring manual CAD re-alignment.
+
+4. **ERP & Webhook Integration:**
+   - Add daemon mode / webhook triggers to allow direct execution by factory ERPs (1C, SAP, Odoo) for real-time order pricing and automated nesting queues.
