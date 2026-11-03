@@ -1,8 +1,8 @@
 use std::{
-    collections::HashMap,
-    fmt::{self, Display},
-    path::Path,
+    collections::HashMap, fmt::{self, Display}, fs::{self, File}, io::{self, BufReader, Read}, path::Path,
 };
+
+use sha2::{Digest, Sha256};
 
 /// Detailed result of the CAD file classification by the production gatekeeper.
 #[derive(Debug, PartialEq)]
@@ -206,6 +206,8 @@ pub struct EntitySummary {
 pub struct CadReport {
     /// Name of the inspected CAD file.
     pub file_name: String,
+    /// Unique file fingerprint (SHA-256).
+    pub file_hash: String,
     /// Format specification version (e.g., AutoCAD DXF version).
     pub format_version: String,
     /// Number of header variables parsed from the drawing header section.
@@ -383,6 +385,7 @@ fn parse_ascii_dxf(content: &str) -> Result<CadReport, CadAnalyzerError> {
 
     Ok(CadReport {
         file_name: String::new(),
+        file_hash: String::new(),
         format_version,
         header_count,
         layers,
@@ -432,27 +435,50 @@ fn process_entity(
     }
 }
 
+pub fn compute_file_hash<P: AsRef<Path>>(path: P) -> Result<String, io::Error> {
+    let file = File::open(path)?;
+    let mut reader = BufReader::new(file);
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 8192]; 
+
+    loop {
+        let count = reader.read(&mut buffer)?;
+        if count == 0 {
+            break;
+        }
+        hasher.update(&buffer[..count]);
+    }
+
+    Ok(hex::encode(hasher.finalize()))
+}
+
 /// Public entry point to analyze any supported CAD file by its path.
 pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerError> {
-    let start_time = std::time::Instant::now();
     let path_ref = path.as_ref();
 
-    // 1. Read file content safely
-    let content = std::fs::read_to_string(path_ref).map_err(|e| {
-        CadAnalyzerError::IoError(format!("Failed to read file '{}': {e}", path_ref.display()))
-    })?;
-
-    // 2. Extract file name for the report
     let file_name = path_ref
         .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "unknown.dxf".to_string());
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown.dxf")
+        .to_string();
 
-    // 3. Dispatch based on format (currently supporting ASCII DXF)
-    // In the future, we can check binary signatures or file extensions here (.dxf vs .step)
+    let file_hash = compute_file_hash(path_ref)
+        .map_err(|e| CadAnalyzerError::IoError(e.to_string()))?;
+
+    let file_bytes = fs::read(path_ref).map_err(|e| CadAnalyzerError::IoError(e.to_string()))?;
+
+    if file_bytes.is_empty() {
+        return Err(CadAnalyzerError::ParseError {
+            offset: 0,
+            message: "File is empty".to_string(),
+        });
+    }
+
+    let content = String::from_utf8_lossy(&file_bytes);
     let mut report = parse_ascii_dxf(&content)?;
+
     report.file_name = file_name;
-    report.analysis_duration = start_time.elapsed();
+    report.file_hash = file_hash;
 
     Ok(report)
 }
@@ -677,6 +703,7 @@ mod tests {
     fn test_classify_report_passed() {
         let report = CadReport {
             file_name: "part.dxf".to_string(),
+            file_hash: "empty_hash".to_string(),
             format_version: "AC1015".to_string(),
             header_count: 1,
             layers: vec![],
@@ -724,6 +751,7 @@ mod tests {
     fn test_classify_report_out_of_bound() {
         let report = CadReport {
             file_name: "huge_part.dxf".to_string(),
+            file_hash: "empty_hash".to_string(),
             format_version: "AC1015".to_string(),
             header_count: 1,
             layers: vec![],
@@ -765,6 +793,7 @@ mod tests {
     fn test_classify_report_corrupted_no_geometry() {
         let report = CadReport {
             file_name: "empty.dxf".to_string(),
+            file_hash: "empty_hash".to_string(),
             format_version: "AC1015".to_string(),
             header_count: 1,
             layers: vec![],

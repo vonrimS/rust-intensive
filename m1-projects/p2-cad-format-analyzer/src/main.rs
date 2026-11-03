@@ -1,13 +1,13 @@
+mod pipeline;
+
 use std::{
     env, fs,
     path::PathBuf,
     process::{self},
 };
 
-use naming_normalizer::normalize_filename;
 
-use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
-
+#[allow(dead_code)]
 #[derive(Debug, PartialEq)]
 enum OutputFormat {
     Text,
@@ -109,37 +109,6 @@ fn parse_args() -> CLiArgs {
     }
 }
 
-struct FileReport {
-    file_name: String,
-    naming_status: Result<naming_normalizer::NormalizedPart, String>,
-    geometry_status: Option<ClassificationResult>,
-}
-
-
-fn process_file(path: &PathBuf, max_bed_x: f64, max_bed_y: f64) -> FileReport {
-    let file_name = path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "unknown".to_string());
-
-    let naming_result = match normalize_filename(&file_name) {
-        Ok(part) => Ok(part),
-        Err(err) => Err(err.to_string()),
-    };
-
-    let geometry_status = if naming_result.is_ok() {
-        Some(classify_cad_file(path, max_bed_x, max_bed_y))
-    } else {
-        None
-    };
-
-    FileReport {
-        file_name,
-        naming_status: naming_result,
-        geometry_status,
-    }
-}
-
 
 fn main() {
     let cli = parse_args();
@@ -153,99 +122,17 @@ fn main() {
         }
     };
 
-    let max_bed_x = 10000.0;
-    let max_bed_y = 7500.0;
-
-    let mut files_to_process = Vec::new();
-
-    if input_path.is_dir() {
-        if cli.verbose {
-            println!("[+] Scanning directory: {:?}", input_path);
-        }
-        match fs::read_dir(&input_path) {
-            Ok(entries) => {
-                for entry in entries.flatten() {
-                    let path = entry.path();
-                    if path.is_file() {
-                        files_to_process.push(path);
-                    }
-                }
-            }
-            Err(e) => {
-                eprintln!("Error reading directory {:?}: {}", input_path, e);
+    match pipeline::run_batch(&input_path, cli.output_path.as_ref(), cli.verbose) {
+        Ok(has_errors) => {
+            if has_errors {
                 process::exit(1);
+            } else {
+                process::exit(0);
             }
         }
-    } else if input_path.is_file() {
-        files_to_process.push(input_path);
-    } else {
-        eprintln!("Error: Input path does not exist: {:?}", input_path);
-        process::exit(1);
-    }
-
-    if files_to_process.is_empty() {
-        println!("[-] No files found to process.");
-        process::exit(0);
-    }
-
-    let mut reports = Vec::new();
-    for file_path in &files_to_process {
-        if cli.verbose {
-            println!("[+] Processing: {:?}", file_path);
-        }
-        let report = process_file(file_path, max_bed_x, max_bed_y);
-        reports.push(report);
-    }
-
-    let mut output_content = String::from("=== CAD Batch Gatekeeper Report ===\n\n");
-    let mut has_errors = false;
-
-    for rep in reports {
-        output_content.push_str(&format!("File: {}\n", rep.file_name));
-        
-        match rep.naming_status {
-            Ok(part) => {
-                output_content.push_str(&format!("  [✔] Naming: PASSED (Key: {})\n", part.normal_key()));
-                
-                if let Some(geom) = rep.geometry_status {
-                    match geom {
-                        ClassificationResult::Passed { sheet_name, cut_length, width, height } => {
-                            output_content.push_str(&format!("  [✔] Geometry: PASSED (Sheet: {}, {:.1}x{:.1}mm, Cut: {:.2}mm)\n", sheet_name, width, height, cut_length));
-                        }
-                        ClassificationResult::OutOfBound { reason, width, height } => {
-                            output_content.push_str(&format!("  [✖] Geometry: OUT OF BOUND ({:.1}x{:.1}mm): {}\n", width, height, reason));
-                            has_errors = true;
-                        }
-                        ClassificationResult::Corrupted { reason, offset } => {
-                            output_content.push_str(&format!("  [✖] Geometry: CORRUPTED (Offset: {}): {}\n", offset, reason));
-                            has_errors = true;
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                output_content.push_str(&format!("  [✖] Naming Gatekeeper Rejected: {}\n", err));
-                has_errors = true;
-            }
-        }
-        output_content.push_str("----------------------------------------\n");
-    }
-
-    if let Some(out_path) = cli.output_path {
-        if let Err(e) = fs::write(&out_path, &output_content) {
-            eprintln!("Error writing report to '{out_path:?}': {e}");
+        Err(err_msg) => {
+            eprintln!("Error: {}", err_msg);
             process::exit(1);
         }
-        if cli.verbose {
-            println!("[+] Batch report saved to {:?}", out_path);
-        }
-    } else {
-        print!("{output_content}");
-    }
-
-    if has_errors {
-        process::exit(1);
-    } else {
-        process::exit(0);
     }
 }
