@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use naming_normalizer::{NormalizedPart, normalize_filename};
 use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
 
-use crate::db::Database;
+use crate::db::{Database, MachineRecord};
 
 /// Comprehensive inspection verdict for a single CAD file.
 ///
@@ -47,12 +47,10 @@ fn compute_file_hash<P: AsRef<Path>>(path: P) -> io::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-/// Runs a single CAD file through the validation pipeline.
-///
-/// First, the name is checked. If the name format is invalid, we skip calculating
-/// the hash and parsing the geometry to save CPU and disk resources — the file is rejected immediately.
-pub fn process_file(path: &PathBuf, max_bed_x: f64, max_bed_y: f64) -> FileReport {
-    // Extract file name safely, falling back to "unknown" if missing
+
+/// Runs a single CAD file through the validation pipeline, matching geometry
+/// against all available active machines stored in the database.
+pub fn process_file_with_machines(path: &PathBuf, machines: &[MachineRecord]) -> FileReport {
     let file_name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
@@ -73,20 +71,50 @@ pub fn process_file(path: &PathBuf, max_bed_x: f64, max_bed_y: f64) -> FileRepor
         "N/A".to_string()
     };
 
-    // 3. Geometry Gatekeeper — checks dimensions and contour integrity
+    // 3. Geometry Gatekeeper — routing across active machine beds
     let geometry_status = if naming_result.is_ok() {
-        let geom = classify_cad_file(path, max_bed_x, max_bed_y);
-        if !matches!(geom, ClassificationResult::Passed { .. }) {
-            is_passed = false; // OutOfBound or Corrupted automatically flags the file as rejected
+        let mut matched_geom = None;
+
+        // Try routing to the first machine bed that fits the part
+        for machine in machines {
+            let geom = classify_cad_file(path, machine.max_x, machine.max_y);
+            if matches!(geom, ClassificationResult::Passed { .. }) {
+                // Override sheet name with the actual machine identifier
+                if let ClassificationResult::Passed {
+                    cut_length,
+                    width,
+                    height,
+                    ..
+                } = geom
+                {
+                    matched_geom = Some(ClassificationResult::Passed {
+                        sheet_name: machine.name.clone(),
+                        cut_length,
+                        width,
+                        height,
+                    });
+                }
+                break;
+            } else if matched_geom.is_none() {
+                // Save first non-passing result as fallback (e.g., Corrupted or OutOfBound)
+                matched_geom = Some(geom);
+            }
         }
+
+        let geom = matched_geom.unwrap_or_else(|| ClassificationResult::OutOfBound {
+            reason: "Part dimensions exceed all available active machine beds".to_string(),
+            width: 0.0,
+            height: 0.0,
+        });
+
+        if !matches!(geom, ClassificationResult::Passed { .. }) {
+            is_passed = false;
+        }
+
         Some(geom)
     } else {
         None
     };
-
-    if naming_result.is_err() {
-        is_passed = false;
-    }
 
     FileReport {
         file_name,
@@ -96,6 +124,7 @@ pub fn process_file(path: &PathBuf, max_bed_x: f64, max_bed_y: f64) -> FileRepor
         is_passed,
     }
 }
+
 
 /// Safely moves a file to its target directory (`passed` or `rejected`).
 fn move_file_to_target(file_path: &Path, target_dir: &Path, verbose: bool) {
@@ -115,7 +144,11 @@ fn move_file_to_target(file_path: &Path, target_dir: &Path, verbose: bool) {
 
 /// Formats a human-readable text report block for a single file
 /// and flips the `has_errors` flag if any issues were detected.
-fn format_file_report(report: &FileReport, has_errors: &mut bool) -> String {
+fn format_file_report(
+    report: &FileReport,
+    estimated_cost: Option<f64>,
+    has_errors: &mut bool,
+) -> String {
     let mut out = String::new();
     out.push_str(&format!("File: {}\n", report.file_name));
     out.push_str(&format!("  [#] SHA-256: {}\n", report.file_hash));
@@ -123,8 +156,10 @@ fn format_file_report(report: &FileReport, has_errors: &mut bool) -> String {
     match &report.naming_status {
         Ok(part) => {
             out.push_str(&format!(
-                "  [✔] Naming: PASSED (Key: {})\n",
-                part.normal_key()
+                "  [✔] Naming: PASSED (Key: {}, Material: {}, Thickness: {}mm)\n",
+                part.normal_key(),
+                part.metal_grade,
+                part.thickness
             ));
 
             if let Some(geom) = &report.geometry_status {
@@ -136,9 +171,14 @@ fn format_file_report(report: &FileReport, has_errors: &mut bool) -> String {
                         height,
                     } => {
                         out.push_str(&format!(
-                            "  [✔] Geometry: PASSED (Sheet: {}, {:.1}x{:.1}mm, Cut: {:.2}mm)\n",
+                            "  [✔] Geometry: PASSED (Machine: {}, {:.1}x{:.1}mm, Cut: {:.2}mm)\n",
                             sheet_name, width, height, cut_length
                         ));
+                        if let Some(cost) = estimated_cost {
+                            out.push_str(&format!("  [$] Estimated Cost: {:.2} EUR\n", cost));
+                        } else {
+                            out.push_str("  [$] Estimated Cost: N/A (Tariff not found)\n");
+                        }
                     }
                     ClassificationResult::OutOfBound {
                         reason,
@@ -171,21 +211,11 @@ fn format_file_report(report: &FileReport, has_errors: &mut bool) -> String {
 }
 
 /// Entry point for batch file or directory processing.
-///
-/// Scans the path, creates `passed/` and `rejected/` subfolders,
-/// sorts incoming files accordingly, and generates an aggregated report.
-///
-/// Returns `Ok(true)` if errors were found (for exit code 1),
-/// or `Ok(false)` if absolutely all files passed successfully.
 pub fn run_batch(
     input_path: &PathBuf,
     output_path: Option<&PathBuf>,
     verbose: bool,
 ) -> Result<bool, String> {
-    // Default laser bed dimensions (in mm)
-    let max_bed_x = 10000.0;
-    let max_bed_y = 7500.0;
-
     let db_path = PathBuf::from("gatekeeper.db");
     let db = Database::init(&db_path)
         .map_err(|e| format!("Failed to initialize SQLite database: {e}"))?;
@@ -194,7 +224,19 @@ pub fn run_batch(
         println!("[+] SQLite database initialized at {:?}", db_path);
     }
 
-    // Determine base directory to place auxiliary folders relative to
+    // Load active machines from SQLite database
+    let machines = db
+        .get_active_machines()
+        .map_err(|e| format!("Failed to fetch active machines from DB: {e}"))?;
+
+    if machines.is_empty() {
+        return Err("No active machines found in database.".to_string());
+    }
+
+    if verbose {
+        println!("[+] Loaded {} active machine(s) for routing", machines.len());
+    }
+
     let base_dir = if input_path.is_dir() {
         input_path.clone()
     } else {
@@ -207,13 +249,11 @@ pub fn run_batch(
     let passed_dir = base_dir.join("passed");
     let rejected_dir = base_dir.join("rejected");
 
-    // Ensure target directories exist on disk
     fs::create_dir_all(&passed_dir)
         .map_err(|e| format!("Failed to create 'passed' folder: {e}"))?;
     fs::create_dir_all(&rejected_dir)
         .map_err(|e| format!("Failed to create 'rejected' folder: {e}"))?;
 
-    // Collect files to process
     let mut files_to_process = Vec::new();
 
     if input_path.is_dir() {
@@ -225,7 +265,6 @@ pub fn run_batch(
 
         for entry in entries.flatten() {
             let path = entry.path();
-            // Filter out directories so we only process files
             if path.is_file() {
                 files_to_process.push(path);
             }
@@ -244,14 +283,12 @@ pub fn run_batch(
     let mut has_errors = false;
     let mut output_content = String::from("=== CAD Batch Gatekeeper Report ===\n\n");
 
-    // Main pipeline loop
     for file_path in files_to_process {
         if verbose {
             println!("[+] Processing: {:?}", file_path);
         }
-        let report = process_file(&file_path, max_bed_x, max_bed_y);
+        let report = process_file_with_machines(&file_path, &machines);
 
-        // Sort file into the appropriate directory based on the verdict
         let target_dir = if report.is_passed {
             &passed_dir
         } else {
@@ -266,8 +303,14 @@ pub fn run_batch(
             "REJECTED"
         };
 
-        let (width_opt, height_opt, cut_len_opt, error_msg) = match &report.naming_status {
-            Ok(_) => {
+        let mut estimated_cost = None;
+        let mut width_opt = None;
+        let mut height_opt = None;
+        let mut cut_len_opt = None;
+        let mut error_msg = None;
+
+        match &report.naming_status {
+            Ok(part) => {
                 if let Some(geom) = &report.geometry_status {
                     match geom {
                         ClassificationResult::Passed {
@@ -275,23 +318,39 @@ pub fn run_batch(
                             height,
                             cut_length,
                             ..
-                        } => (Some(*width), Some(*height), Some(*cut_length), None),
+                        } => {
+                            width_opt = Some(*width);
+                            height_opt = Some(*height);
+                            cut_len_opt = Some(*cut_length);
+
+                            // Calculate commercial Quick Quote estimate
+                            if let Ok(Some(price_per_meter)) =
+                                db.get_cutting_tariff(&part.metal_grade, part.thickness)
+                            {
+                                estimated_cost = Some((*cut_length / 1000.0) * price_per_meter);
+                            }
+                        }
                         ClassificationResult::OutOfBound {
                             width,
                             height,
                             reason,
-                        } => (Some(*width), Some(*height), None, Some(reason.clone())),
+                        } => {
+                            width_opt = Some(*width);
+                            height_opt = Some(*height);
+                            error_msg = Some(reason.clone());
+                        }
                         ClassificationResult::Corrupted { reason, .. } => {
-                            (None, None, None, Some(reason.clone()))
+                            error_msg = Some(reason.clone());
                         }
                     }
-                } else {
-                    (None, None, None, None)
                 }
             }
-            Err(err) => (None, None, None, Some(err.clone())),
-        };
+            Err(err) => {
+                error_msg = Some(err.clone());
+            }
+        }
 
+        // Log inspection event into SQLite database
         if let Err(e) = db.log_inspection(
             &report.file_name,
             &report.file_hash,
@@ -299,7 +358,7 @@ pub fn run_batch(
             width_opt,
             height_opt,
             cut_len_opt,
-            None,
+            estimated_cost,
             error_msg.as_deref(),
         ) {
             eprintln!(
@@ -308,11 +367,13 @@ pub fn run_batch(
             );
         }
 
-        // Accumulate text report
-        output_content.push_str(&format_file_report(&report, &mut has_errors));
+        output_content.push_str(&format_file_report(
+            &report,
+            estimated_cost,
+            &mut has_errors,
+        ));
     }
 
-    // Save report to file or print to stdout
     if let Some(out_path) = output_path {
         fs::write(out_path, &output_content)
             .map_err(|e| format!("Error writing report to '{out_path:?}': {e}"))?;
@@ -326,12 +387,14 @@ pub fn run_batch(
     Ok(has_errors)
 }
 
+
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::db::MachineRecord;
+
+use super::*;
     use std::io::Write;
 
-    /// Verifies that the hash is computed accurately and has the correct hex-string length (64 chars)
     #[test]
     fn test_compute_file_hash() {
         let temp_dir = std::env::temp_dir();
@@ -349,7 +412,6 @@ mod tests {
         let _ = fs::remove_file(file_path);
     }
 
-    /// Verifies that an invalid file name immediately rejects the file and bypasses hashing
     #[test]
     fn test_process_file_invalid_naming() {
         let temp_dir = std::env::temp_dir();
@@ -358,7 +420,14 @@ mod tests {
         let mut file = File::create(&invalid_path).unwrap();
         writeln!(file, "dummy content").unwrap();
 
-        let report = process_file(&invalid_path, 10000.0, 7500.0);
+        let machines = vec![MachineRecord {
+            id: 1,
+            name: "Test-Laser".to_string(),
+            max_x: 3000.0,
+            max_y: 1500.0,
+        }];
+
+        let report = process_file_with_machines(&invalid_path, &machines);
 
         assert!(!report.is_passed);
         assert!(report.naming_status.is_err());
@@ -367,7 +436,6 @@ mod tests {
         let _ = fs::remove_file(invalid_path);
     }
 
-    /// Verifies report formatting and error flag behavior
     #[test]
     fn test_format_file_report_error_flag() {
         let report = FileReport {
@@ -379,7 +447,7 @@ mod tests {
         };
 
         let mut has_errors = false;
-        let formatted = format_file_report(&report, &mut has_errors);
+        let formatted = format_file_report(&report, None, &mut has_errors);
 
         assert!(has_errors);
         assert!(formatted.contains("[✖] Naming Gatekeeper Rejected"));

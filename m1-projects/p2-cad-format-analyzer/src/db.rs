@@ -5,6 +5,7 @@ pub struct Database {
     conn: Connection,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct MachineRecord {
     pub id: i64,
