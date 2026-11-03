@@ -1,11 +1,10 @@
 mod pipeline;
 
 use std::{
-    env, fs,
+    env,
     path::PathBuf,
     process::{self},
 };
-
 
 #[allow(dead_code)]
 #[derive(Debug, PartialEq)]
@@ -15,6 +14,7 @@ enum OutputFormat {
 }
 
 /// CLI Configuration structure parsed from command-line arguments.
+#[allow(dead_code)]
 struct CLiArgs {
     input_path: Option<PathBuf>,
     output_path: Option<PathBuf>,
@@ -109,14 +109,15 @@ fn parse_args() -> CLiArgs {
     }
 }
 
-
 fn main() {
     let cli = parse_args();
 
     let input_path = match cli.input_path {
         Some(path) => path,
         None => {
-            eprintln!("Error: Missing required input path. Use -i <path> or pass it as an argument.");
+            eprintln!(
+                "Error: Missing required input path. Use -i <path> or pass it as an argument."
+            );
             print_usage(&env::args().next().unwrap_or_default());
             process::exit(1);
         }
