@@ -6,6 +6,8 @@ use std::path::{Path, PathBuf};
 use naming_normalizer::{NormalizedPart, normalize_filename};
 use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
 
+use crate::db::Database;
+
 /// Comprehensive inspection verdict for a single CAD file.
 ///
 /// Combines everything from naming and hash checks to geometry validation,
@@ -184,6 +186,14 @@ pub fn run_batch(
     let max_bed_x = 10000.0;
     let max_bed_y = 7500.0;
 
+    let db_path = PathBuf::from("gatekeeper.db");
+    let db = Database::init(&db_path)
+        .map_err(|e| format!("Failed to initialize SQLite database: {e}"))?;
+
+    if verbose {
+        println!("[+] SQLite database initialized at {:?}", db_path);
+    }
+
     // Determine base directory to place auxiliary folders relative to
     let base_dir = if input_path.is_dir() {
         input_path.clone()
@@ -249,6 +259,54 @@ pub fn run_batch(
         };
 
         move_file_to_target(&file_path, target_dir, verbose);
+
+        let verdict = if report.is_passed {
+            "PASSED"
+        } else {
+            "REJECTED"
+        };
+
+        let (width_opt, height_opt, cut_len_opt, error_msg) = match &report.naming_status {
+            Ok(_) => {
+                if let Some(geom) = &report.geometry_status {
+                    match geom {
+                        ClassificationResult::Passed {
+                            width,
+                            height,
+                            cut_length,
+                            ..
+                        } => (Some(*width), Some(*height), Some(*cut_length), None),
+                        ClassificationResult::OutOfBound {
+                            width,
+                            height,
+                            reason,
+                        } => (Some(*width), Some(*height), None, Some(reason.clone())),
+                        ClassificationResult::Corrupted { reason, .. } => {
+                            (None, None, None, Some(reason.clone()))
+                        }
+                    }
+                } else {
+                    (None, None, None, None)
+                }
+            }
+            Err(err) => (None, None, None, Some(err.clone())),
+        };
+
+        if let Err(e) = db.log_inspection(
+            &report.file_name,
+            &report.file_hash,
+            verdict,
+            width_opt,
+            height_opt,
+            cut_len_opt,
+            None,
+            error_msg.as_deref(),
+        ) {
+            eprintln!(
+                "Warning: Failed to log inspection into SQLite for {}: {}",
+                report.file_name, e
+            );
+        }
 
         // Accumulate text report
         output_content.push_str(&format_file_report(&report, &mut has_errors));
