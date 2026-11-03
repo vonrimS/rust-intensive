@@ -4,6 +4,8 @@ use std::{
     process::{self},
 };
 
+use naming_normalizer::normalize_filename;
+
 use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
 
 #[derive(Debug, PartialEq)]
@@ -125,18 +127,44 @@ fn main() {
         println!("[+] Analyzing CAD file: {:?}", input_path);
     }
 
-    let max_bed_x = 10000.0;
-    let max_bed_y = 7500.0;
-
-    let classification = classify_cad_file(&input_path, max_bed_x, max_bed_y);
-
+    
     let file_name = input_path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "unknown.dxf".to_string());
 
+    let normalized_info = match normalize_filename(&file_name) {
+        Ok(part) => {
+            if cli.verbose {
+                println!("[+] Filename structure verified successfully.");
+                println!("    Canonical Key: {}", part.normal_key());
+            }
+            Some(part)
+        }
+        Err(err) => {
+            if cli.verbose {
+                println!("[!] Naming gatekeeper warning: {}", err);
+            }
+            None
+        }
+    };
+
+    let max_bed_x = 10000.0;
+    let max_bed_y = 7500.0;
+
+    let classification = classify_cad_file(&input_path, max_bed_x, max_bed_y);
+
+
     let output_content = match cli.format {
         OutputFormat::Text => {
+            let naming_str = match &normalized_info {
+                Some(part) => format!(
+                    " [PASSED] Canonical Key: {}\n  - Company: {}\n  - Project: {}\n  - Material: {}\n  - Thickness: {:.1} mm",
+                    part.normal_key(), part.company, part.project, part.metal_grade, part.thickness
+                ),
+                None => " [FAILED] Invalid format (Expected: Company_Project_Material_Thickness)".to_string(),
+            };
+
             let status_str = match &classification {
                 ClassificationResult::Passed {
                     sheet_name,
@@ -170,8 +198,9 @@ fn main() {
             format!(
                 "=== CAD Format Analyzer Report ===\n\n\
                  [+] Inspected file: {}\n\
+                 [+] Naming Gatekeeper: {}\n\
                  [+] Gatekeeper Verdict:{}\n\n",
-                file_name, status_str
+                file_name, naming_str, status_str
             )
         }
 
