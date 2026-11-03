@@ -109,160 +109,143 @@ fn parse_args() -> CLiArgs {
     }
 }
 
+struct FileReport {
+    file_name: String,
+    naming_status: Result<naming_normalizer::NormalizedPart, String>,
+    geometry_status: Option<ClassificationResult>,
+}
+
+
+fn process_file(path: &PathBuf, max_bed_x: f64, max_bed_y: f64) -> FileReport {
+    let file_name = path
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "unknown".to_string());
+
+    let naming_result = match normalize_filename(&file_name) {
+        Ok(part) => Ok(part),
+        Err(err) => Err(err.to_string()),
+    };
+
+    let geometry_status = if naming_result.is_ok() {
+        Some(classify_cad_file(path, max_bed_x, max_bed_y))
+    } else {
+        None
+    };
+
+    FileReport {
+        file_name,
+        naming_status: naming_result,
+        geometry_status,
+    }
+}
+
+
 fn main() {
     let cli = parse_args();
 
     let input_path = match cli.input_path {
         Some(path) => path,
         None => {
-            eprintln!(
-                "Error: Missing required input file. Use -i <file> or pass it as an argument."
-            );
+            eprintln!("Error: Missing required input path. Use -i <path> or pass it as an argument.");
             print_usage(&env::args().next().unwrap_or_default());
             process::exit(1);
-        }
-    };
-
-    if cli.verbose {
-        println!("[+] Analyzing CAD file: {:?}", input_path);
-    }
-
-    
-    let file_name = input_path
-        .file_name()
-        .map(|s| s.to_string_lossy().into_owned())
-        .unwrap_or_else(|| "unknown.dxf".to_string());
-
-    let normalized_info = match normalize_filename(&file_name) {
-        Ok(part) => {
-            if cli.verbose {
-                println!("[+] Filename structure verified successfully.");
-                println!("    Canonical Key: {}", part.normal_key());
-            }
-            Some(part)
-        }
-        Err(err) => {
-            if cli.verbose {
-                println!("[!] Naming gatekeeper warning: {}", err);
-            }
-            None
         }
     };
 
     let max_bed_x = 10000.0;
     let max_bed_y = 7500.0;
 
-    let classification = classify_cad_file(&input_path, max_bed_x, max_bed_y);
+    let mut files_to_process = Vec::new();
 
-
-    let output_content = match cli.format {
-        OutputFormat::Text => {
-            let naming_str = match &normalized_info {
-                Some(part) => format!(
-                    " [PASSED] Canonical Key: {}\n  - Company: {}\n  - Project: {}\n  - Material: {}\n  - Thickness: {:.1} mm",
-                    part.normal_key(), part.company, part.project, part.metal_grade, part.thickness
-                ),
-                None => " [FAILED] Invalid format (Expected: Company_Project_Material_Thickness)".to_string(),
-            };
-
-            let status_str = match &classification {
-                ClassificationResult::Passed {
-                    sheet_name,
-                    cut_length,
-                    width,
-                    height,
-                } => {
-                    format!(
-                        " [PASSED] Ready for production\n  - Assigned Sheet: {}\n  - Part Dimensions: {:.1} x {:.1} mm\n  - Total Cut Length: {:.2} mm",
-                        sheet_name, width, height, cut_length
-                    )
-                }
-                ClassificationResult::OutOfBound {
-                    reason,
-                    width,
-                    height,
-                } => {
-                    format!(
-                        " [OUT OF BOUND] Exceeds machine bed limits ({max_bed_x}x{max_bed_y}mm)\n  - Part Dimensions: {:.1} x {:.1} mm\n  - Reason: {}",
-                        width, height, reason
-                    )
-                }
-                ClassificationResult::Corrupted { reason, offset } => {
-                    format!(
-                        " [CORRUPTED] File rejected by gatekeeper\n  - Offset: {}\n  - Reason: {}",
-                        offset, reason
-                    )
-                }
-            };
-
-            format!(
-                "=== CAD Format Analyzer Report ===\n\n\
-                 [+] Inspected file: {}\n\
-                 [+] Naming Gatekeeper: {}\n\
-                 [+] Gatekeeper Verdict:{}\n\n",
-                file_name, naming_str, status_str
-            )
+    if input_path.is_dir() {
+        if cli.verbose {
+            println!("[+] Scanning directory: {:?}", input_path);
         }
-
-        OutputFormat::Json => {
-            let (status_name, details_json) = match &classification {
-                ClassificationResult::Passed {
-                    sheet_name,
-                    cut_length,
-                    width,
-                    height,
-                } => (
-                    "PASSED",
-                    format!(
-                        "\"sheet_name\": \"{}\", \"width\": {:.2}, \"height\": {:.2}, \"cut_length_mm\": {:.2}",
-                        sheet_name, width, height, cut_length
-                    ),
-                ),
-                ClassificationResult::OutOfBound {
-                    reason,
-                    width,
-                    height,
-                } => (
-                    "OUT_OF_BOUND",
-                    format!(
-                        "\"width\": {:.2}, \"height\": {:.2}, \"reason\": \"{}\"",
-                        width, height, reason
-                    ),
-                ),
-                ClassificationResult::Corrupted { reason, offset } => (
-                    "CORRUPTED",
-                    format!("\"offset\": {}, \"reason\": \"{}\"", offset, reason),
-                ),
-            };
-
-            format!(
-                "{{\n\
-                \t\"file_name\": \"{}\",\n\
-                \t\"status\": \"{}\",\n\
-                \t{}\n\
-                }}",
-                file_name, status_name, details_json
-            )
+        match fs::read_dir(&input_path) {
+            Ok(entries) => {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        files_to_process.push(path);
+                    }
+                }
+            }
+            Err(e) => {
+                eprintln!("Error reading directory {:?}: {}", input_path, e);
+                process::exit(1);
+            }
         }
-    };
+    } else if input_path.is_file() {
+        files_to_process.push(input_path);
+    } else {
+        eprintln!("Error: Input path does not exist: {:?}", input_path);
+        process::exit(1);
+    }
 
-    // Запись в файл или печать в stdout
+    if files_to_process.is_empty() {
+        println!("[-] No files found to process.");
+        process::exit(0);
+    }
+
+    let mut reports = Vec::new();
+    for file_path in &files_to_process {
+        if cli.verbose {
+            println!("[+] Processing: {:?}", file_path);
+        }
+        let report = process_file(file_path, max_bed_x, max_bed_y);
+        reports.push(report);
+    }
+
+    let mut output_content = String::from("=== CAD Batch Gatekeeper Report ===\n\n");
+    let mut has_errors = false;
+
+    for rep in reports {
+        output_content.push_str(&format!("File: {}\n", rep.file_name));
+        
+        match rep.naming_status {
+            Ok(part) => {
+                output_content.push_str(&format!("  [✔] Naming: PASSED (Key: {})\n", part.normal_key()));
+                
+                if let Some(geom) = rep.geometry_status {
+                    match geom {
+                        ClassificationResult::Passed { sheet_name, cut_length, width, height } => {
+                            output_content.push_str(&format!("  [✔] Geometry: PASSED (Sheet: {}, {:.1}x{:.1}mm, Cut: {:.2}mm)\n", sheet_name, width, height, cut_length));
+                        }
+                        ClassificationResult::OutOfBound { reason, width, height } => {
+                            output_content.push_str(&format!("  [✖] Geometry: OUT OF BOUND ({:.1}x{:.1}mm): {}\n", width, height, reason));
+                            has_errors = true;
+                        }
+                        ClassificationResult::Corrupted { reason, offset } => {
+                            output_content.push_str(&format!("  [✖] Geometry: CORRUPTED (Offset: {}): {}\n", offset, reason));
+                            has_errors = true;
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                output_content.push_str(&format!("  [✖] Naming Gatekeeper Rejected: {}\n", err));
+                has_errors = true;
+            }
+        }
+        output_content.push_str("----------------------------------------\n");
+    }
+
     if let Some(out_path) = cli.output_path {
         if let Err(e) = fs::write(&out_path, &output_content) {
-            eprintln!("Error writing to file '{out_path:?}': {e}");
+            eprintln!("Error writing report to '{out_path:?}': {e}");
             process::exit(1);
         }
         if cli.verbose {
-            println!("[+] Report successfully saved to {:?}", out_path);
+            println!("[+] Batch report saved to {:?}", out_path);
         }
     } else {
         print!("{output_content}");
     }
 
-    // Возвращаем код выхода в зависимости от статуса (полезно для CI/скриптов цеха)
-    match classification {
-        ClassificationResult::Passed { .. } => process::exit(0),
-        ClassificationResult::OutOfBound { .. } => process::exit(2),
-        ClassificationResult::Corrupted { .. } => process::exit(1),
+    if has_errors {
+        process::exit(1);
+    } else {
+        process::exit(0);
     }
 }
