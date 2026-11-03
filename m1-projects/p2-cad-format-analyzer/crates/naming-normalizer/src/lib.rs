@@ -1,6 +1,6 @@
 use std::error::Error;
-use std::fmt::Display;
 use std::fmt;
+use std::fmt::Display;
 
 /// Represents the normalized "passport" of a CAD part extracted from its filename.
 #[derive(Debug, Clone, PartialEq)]
@@ -42,7 +42,7 @@ impl Display for NormalizerError {
             NormalizerError::InvalidThickness { raw_value } => {
                 write!(f, "Could not parse thickness from value: '{}'", raw_value)
             }
-        } 
+        }
     }
 }
 
@@ -68,7 +68,10 @@ pub fn normalize_filename(filename: &str) -> Result<NormalizedPart, NormalizerEr
     if parts.len() < 4 {
         return Err(NormalizerError::InvalidFormat {
             filename: filename.to_string(),
-            reason: format!("Expected at least 4 parts (Company, Project, Metal, Thickness), found {}", parts.len()),
+            reason: format!(
+                "Expected at least 4 parts (Company, Project, Metal, Thickness), found {}",
+                parts.len()
+            ),
         });
     }
 
@@ -77,15 +80,13 @@ pub fn normalize_filename(filename: &str) -> Result<NormalizedPart, NormalizerEr
     let metal_grade = parts[2].to_uppercase();
 
     // 3. Clean up noise from the thickness value (e.g., "2.0mm" -> "2.0")
-    let thickness_raw = parts[3]
-        .replace("mm", "")
-        .replace("м", "");
+    let thickness_raw = parts[3].replace("mm", "").replace("м", "");
 
-    let thickness: f64 = thickness_raw.parse().map_err(|_| {
-        NormalizerError::InvalidThickness {
+    let thickness: f64 = thickness_raw
+        .parse()
+        .map_err(|_| NormalizerError::InvalidThickness {
             raw_value: parts[3].clone(),
-        }
-    })?;
+        })?;
 
     Ok(NormalizedPart {
         company,
@@ -94,7 +95,6 @@ pub fn normalize_filename(filename: &str) -> Result<NormalizedPart, NormalizerEr
         thickness,
     })
 }
-
 
 #[cfg(test)]
 mod tests {
