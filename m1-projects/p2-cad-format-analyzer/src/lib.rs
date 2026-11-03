@@ -1,8 +1,9 @@
 use std::{
-    collections::HashMap, fmt::{self, Display}, fs::{self, File}, io::{self, BufReader, Read}, path::Path,
+    collections::HashMap,
+    fmt::{self, Display},
+    fs,
+    path::Path,
 };
-
-use sha2::{Digest, Sha256};
 
 /// Detailed result of the CAD file classification by the production gatekeeper.
 #[derive(Debug, PartialEq)]
@@ -435,23 +436,6 @@ fn process_entity(
     }
 }
 
-pub fn compute_file_hash<P: AsRef<Path>>(path: P) -> Result<String, io::Error> {
-    let file = File::open(path)?;
-    let mut reader = BufReader::new(file);
-    let mut hasher = Sha256::new();
-    let mut buffer = [0; 8192]; 
-
-    loop {
-        let count = reader.read(&mut buffer)?;
-        if count == 0 {
-            break;
-        }
-        hasher.update(&buffer[..count]);
-    }
-
-    Ok(hex::encode(hasher.finalize()))
-}
-
 /// Public entry point to analyze any supported CAD file by its path.
 pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerError> {
     let path_ref = path.as_ref();
@@ -461,9 +445,6 @@ pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerE
         .and_then(|n| n.to_str())
         .unwrap_or("unknown.dxf")
         .to_string();
-
-    let file_hash = compute_file_hash(path_ref)
-        .map_err(|e| CadAnalyzerError::IoError(e.to_string()))?;
 
     let file_bytes = fs::read(path_ref).map_err(|e| CadAnalyzerError::IoError(e.to_string()))?;
 
@@ -478,7 +459,6 @@ pub fn parse_cad_file<P: AsRef<Path>>(path: P) -> Result<CadReport, CadAnalyzerE
     let mut report = parse_ascii_dxf(&content)?;
 
     report.file_name = file_name;
-    report.file_hash = file_hash;
 
     Ok(report)
 }
