@@ -4,8 +4,8 @@ use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use naming_normalizer::{normalize_filename, NormalizedPart};
-use p2_cad_format_analyzer::{classify_cad_file, ClassificationResult};
+use naming_normalizer::{NormalizedPart, normalize_filename};
+use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
 
 use crate::db::{self, Database, MachineRecord};
 
@@ -21,10 +21,7 @@ pub struct FileReport {
 
 impl FileReport {
     /// Extracts normalized scalar fields for database logging and JSON reporting.
-    pub fn extract_metrics(
-        &self,
-        db: &Database,
-    ) -> ExtractedMetrics {
+    pub fn extract_metrics(&self, db: &Database) -> ExtractedMetrics {
         let mut metrics = ExtractedMetrics::default();
 
         match &self.naming_status {
@@ -120,7 +117,12 @@ impl JsonFileItem {
         Self {
             file_name: report.file_name.clone(),
             file_hash: report.file_hash.clone(),
-            verdict: if report.is_passed { "PASSED" } else { "REJECTED" }.to_string(),
+            verdict: if report.is_passed {
+                "PASSED"
+            } else {
+                "REJECTED"
+            }
+            .to_string(),
             normal_key: metrics.normal_key.clone(),
             material: metrics.material.clone(),
             thickness_mm: metrics.thickness_mm,
@@ -139,6 +141,7 @@ pub struct JsonBatchReport {
     pub total_files: usize,
     pub passed_count: usize,
     pub rejected_count: usize,
+    pub execution_time_ms: u128,
     pub files: Vec<JsonFileItem>,
 }
 
@@ -324,6 +327,8 @@ pub fn run_batch(
     is_json_format: bool,
     verbose: bool,
 ) -> Result<bool, String> {
+    let start_time = std::time::Instant::now();
+
     let db_path = PathBuf::from("gatekeeper.db");
     let db = Database::init(&db_path)
         .map_err(|e| format!("Failed to initialize SQLite database: {e}"))?;
@@ -401,7 +406,11 @@ pub fn run_batch(
         let metrics = report.extract_metrics(&db);
 
         // Логирование в SQLite
-        let verdict = if report.is_passed { "PASSED" } else { "REJECTED" };
+        let verdict = if report.is_passed {
+            "PASSED"
+        } else {
+            "REJECTED"
+        };
         if let Err(e) = db.log_inspection(db::InspectionParams {
             file_name: &report.file_name,
             file_hash: &report.file_hash,
@@ -429,6 +438,9 @@ pub fn run_batch(
         json_items.push(JsonFileItem::from_report(&report, &metrics));
     }
 
+    let elapsed = start_time.elapsed();
+    let elapsed_ms = elapsed.as_millis();
+
     let final_output = if is_json_format {
         let batch_report = JsonBatchReport {
             total_files: json_items.len(),
@@ -437,12 +449,15 @@ pub fn run_batch(
                 .iter()
                 .filter(|i| i.verdict == "REJECTED")
                 .count(),
+            execution_time_ms: elapsed_ms,
             files: json_items,
         };
         serde_json::to_string_pretty(&batch_report)
             .map_err(|e| format!("Failed to serialize JSON report: {e}"))?
     } else {
-        output_text_content
+        let mut text_report = output_text_content;
+        text_report.push_str(&format!("\n[+] Total execution time: {:.2?}ms\n", elapsed_ms));
+        text_report
     };
 
     if let Some(out_path) = output_path {
