@@ -14,6 +14,18 @@ pub struct MachineRecord {
     pub max_y: f64,
 }
 
+/// Parameters structure for logging inspection results, avoiding too_many_arguments warning.
+pub struct InspectionParams<'a> {
+    pub file_name: &'a str,
+    pub file_hash: &'a str,
+    pub verdict: &'a str,
+    pub width: Option<f64>,
+    pub height: Option<f64>,
+    pub cut_length: Option<f64>,
+    pub estimated_cost: Option<f64>,
+    pub error_reason: Option<&'a str>,
+}
+
 impl Database {
     /// Opens the SQLite database and initializes it using the external schema file,
     /// then seeds default manufacturing data if the tables are empty.
@@ -32,11 +44,9 @@ impl Database {
     /// Populates initial reference data (machines, default sheets, and cutting tariffs)
     /// to ensure the database is never empty on first launch.
     fn seed_defaults(&self) -> Result<()> {
-        let machine_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM machines", 
-            [], 
-            |row| row.get(0)
-        )?;
+        let machine_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM machines", [], |row| row.get(0))?;
 
         if machine_count == 0 {
             self.conn.execute(
@@ -49,11 +59,9 @@ impl Database {
             )?;
         }
 
-        let tariff_count: i64 = self.conn.query_row(
-            "SELECT COUNT(*) FROM cutting_tariffs", 
-            [], 
-            |row| row.get(0)
-        )?;
+        let tariff_count: i64 =
+            self.conn
+                .query_row("SELECT COUNT(*) FROM cutting_tariffs", [], |row| row.get(0))?;
 
         if tariff_count == 0 {
             self.conn.execute(
@@ -70,41 +78,29 @@ impl Database {
     }
 
     /// Inserts an inspection log record into the SQLite registry.
-    pub fn log_inspection(
-        &self,
-        file_name: &str,
-        file_hash: &str,
-        verdict: &str,
-        width_mm: Option<f64>,
-        height_mm: Option<f64>,
-        cut_length_mm: Option<f64>,
-        estimated_cost: Option<f64>,
-        error_reason: Option<&str>,
-    ) -> Result<()> {
+    pub fn log_inspection(&self, params: InspectionParams<'_>) -> Result<()> {
+        let query = "INSERT INTO inspection_logs (file_name, file_hash, verdict, width, height, cut_length, estimated_cost, error_reason) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+        
         self.conn.execute(
-            r#"
-            INSERT INTO inspection_logs 
-            (file_name, file_hash, verdict, width_mm, height_mm, cut_length_mm, estimated_cost, error_reason)
-            VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
-            "#,
-            params![
-                file_name,
-                file_hash,
-                verdict,
-                width_mm,
-                height_mm,
-                cut_length_mm,
-                estimated_cost,
-                error_reason,
+            query,
+            rusqlite::params![
+                params.file_name,
+                params.file_hash,
+                params.verdict,
+                params.width,
+                params.height,
+                params.cut_length,
+                params.estimated_cost,
+                params.error_reason,
             ],
         )?;
         Ok(())
     }
 
     pub fn get_active_machines(&self) -> Result<Vec<MachineRecord>> {
-        let mut stmt = self.conn.prepare(
-            "SELECT id, name, max_x, max_y FROM machines WHERE is_active = 1"
-        )?;
+        let mut stmt = self
+            .conn
+            .prepare("SELECT id, name, max_x, max_y FROM machines WHERE is_active = 1")?;
 
         let machine_iter = stmt.query_map([], |row| {
             Ok(MachineRecord {

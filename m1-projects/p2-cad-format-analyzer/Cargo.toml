@@ -8,6 +8,8 @@ naming-normalizer = { path = "crates/naming-normalizer" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 sha2 = "0.10"
 hex = "0.4"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 [workspace]
 members = [

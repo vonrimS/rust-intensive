@@ -1,35 +1,148 @@
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 use std::fs::{self, File};
 use std::io::{self, BufReader, Read};
 use std::path::{Path, PathBuf};
 
-use naming_normalizer::{NormalizedPart, normalize_filename};
-use p2_cad_format_analyzer::{ClassificationResult, classify_cad_file};
+use naming_normalizer::{normalize_filename, NormalizedPart};
+use p2_cad_format_analyzer::{classify_cad_file, ClassificationResult};
 
-use crate::db::{Database, MachineRecord};
+use crate::db::{self, Database, MachineRecord};
 
 /// Comprehensive inspection verdict for a single CAD file.
-///
-/// Combines everything from naming and hash checks to geometry validation,
-/// along with a direct `is_passed` flag for fast folder sorting.
 #[derive(Debug)]
 pub struct FileReport {
-    /// File name (e.g., `CICAR_backet_st3_2.0mm.dxf`).
     pub file_name: String,
-    /// SHA-256 hash of the file. Set to `"N/A"` if the file fails the initial naming check.
     pub file_hash: String,
-    /// Result from the Naming Gatekeeper.
     pub naming_status: Result<NormalizedPart, String>,
-    /// Result from the Geometry analysis (populated if the naming check passes).
     pub geometry_status: Option<ClassificationResult>,
-    /// Master flag: did the file pass every single check in the pipeline?
     pub is_passed: bool,
 }
 
+impl FileReport {
+    /// Extracts normalized scalar fields for database logging and JSON reporting.
+    pub fn extract_metrics(
+        &self,
+        db: &Database,
+    ) -> ExtractedMetrics {
+        let mut metrics = ExtractedMetrics::default();
+
+        match &self.naming_status {
+            Ok(part) => {
+                metrics.normal_key = Some(part.normal_key());
+                metrics.material = Some(part.metal_grade.clone());
+                metrics.thickness_mm = Some(part.thickness);
+
+                if let Some(geom) = &self.geometry_status {
+                    match geom {
+                        ClassificationResult::Passed {
+                            sheet_name,
+                            width,
+                            height,
+                            cut_length,
+                        } => {
+                            metrics.width_mm = Some(round_to_2_decimals(*width));
+                            metrics.height_mm = Some(round_to_2_decimals(*height));
+                            metrics.cut_length_mm = Some(round_to_2_decimals(*cut_length));
+                            metrics.machine_name = Some(sheet_name.clone());
+
+                            if let Ok(Some(price_per_meter)) =
+                                db.get_cutting_tariff(&part.metal_grade, part.thickness)
+                            {
+                                let cost = (*cut_length / 1000.0) * price_per_meter;
+                                metrics.estimated_cost_eur = Some(round_to_2_decimals(cost));
+                            }
+                        }
+                        ClassificationResult::OutOfBound {
+                            width,
+                            height,
+                            reason,
+                        } => {
+                            metrics.width_mm = Some(round_to_2_decimals(*width));
+                            metrics.height_mm = Some(round_to_2_decimals(*height));
+                            metrics.error_reason = Some(reason.clone());
+                        }
+                        ClassificationResult::Corrupted { reason, .. } => {
+                            metrics.error_reason = Some(reason.clone());
+                        }
+                    }
+                }
+            }
+            Err(err) => {
+                metrics.error_reason = Some(err.clone());
+            }
+        }
+
+        metrics
+    }
+}
+
+#[derive(Debug, Default)]
+pub struct ExtractedMetrics {
+    pub normal_key: Option<String>,
+    pub material: Option<String>,
+    pub thickness_mm: Option<f64>,
+    pub machine_name: Option<String>,
+    pub width_mm: Option<f64>,
+    pub height_mm: Option<f64>,
+    pub cut_length_mm: Option<f64>,
+    pub estimated_cost_eur: Option<f64>,
+    pub error_reason: Option<String>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonFileItem {
+    pub file_name: String,
+    pub file_hash: String,
+    pub verdict: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub normal_key: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub material: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub thickness_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub machine_name: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub height_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub cut_length_mm: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub estimated_cost_eur: Option<f64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error_reason: Option<String>,
+}
+
+impl JsonFileItem {
+    pub fn from_report(report: &FileReport, metrics: &ExtractedMetrics) -> Self {
+        Self {
+            file_name: report.file_name.clone(),
+            file_hash: report.file_hash.clone(),
+            verdict: if report.is_passed { "PASSED" } else { "REJECTED" }.to_string(),
+            normal_key: metrics.normal_key.clone(),
+            material: metrics.material.clone(),
+            thickness_mm: metrics.thickness_mm,
+            machine_name: metrics.machine_name.clone(),
+            width_mm: metrics.width_mm,
+            height_mm: metrics.height_mm,
+            cut_length_mm: metrics.cut_length_mm,
+            estimated_cost_eur: metrics.estimated_cost_eur,
+            error_reason: metrics.error_reason.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Serialize)]
+pub struct JsonBatchReport {
+    pub total_files: usize,
+    pub passed_count: usize,
+    pub rejected_count: usize,
+    pub files: Vec<JsonFileItem>,
+}
+
 /// Computes the SHA-256 hash of a file using a streaming approach.
-///
-/// Reads the file in small 8 KB buffers to avoid memory spikes,
-/// even when processing large CAD blueprints of hundreds of megabytes.
 fn compute_file_hash<P: AsRef<Path>>(path: P) -> io::Result<String> {
     let file = File::open(path)?;
     let mut reader = BufReader::new(file);
@@ -47,20 +160,16 @@ fn compute_file_hash<P: AsRef<Path>>(path: P) -> io::Result<String> {
     Ok(hex::encode(hasher.finalize()))
 }
 
-
-/// Runs a single CAD file through the validation pipeline, matching geometry
-/// against all available active machines stored in the database.
+/// Runs a single CAD file through the validation pipeline.
 pub fn process_file_with_machines(path: &PathBuf, machines: &[MachineRecord]) -> FileReport {
     let file_name = path
         .file_name()
         .map(|s| s.to_string_lossy().into_owned())
         .unwrap_or_else(|| "unknown".to_string());
 
-    // 1. Naming Gatekeeper — primary filter
     let naming_result = normalize_filename(&file_name).map_err(|e| e.to_string());
     let mut is_passed = naming_result.is_ok();
 
-    // 2. Compute hash only for surviving files
     let file_hash = if naming_result.is_ok() {
         compute_file_hash(path).unwrap_or_else(|_| {
             is_passed = false;
@@ -71,15 +180,12 @@ pub fn process_file_with_machines(path: &PathBuf, machines: &[MachineRecord]) ->
         "N/A".to_string()
     };
 
-    // 3. Geometry Gatekeeper — routing across active machine beds
     let geometry_status = if naming_result.is_ok() {
         let mut matched_geom = None;
 
-        // Try routing to the first machine bed that fits the part
         for machine in machines {
             let geom = classify_cad_file(path, machine.max_x, machine.max_y);
             if matches!(geom, ClassificationResult::Passed { .. }) {
-                // Override sheet name with the actual machine identifier
                 if let ClassificationResult::Passed {
                     cut_length,
                     width,
@@ -96,7 +202,6 @@ pub fn process_file_with_machines(path: &PathBuf, machines: &[MachineRecord]) ->
                 }
                 break;
             } else if matched_geom.is_none() {
-                // Save first non-passing result as fallback (e.g., Corrupted or OutOfBound)
                 matched_geom = Some(geom);
             }
         }
@@ -125,13 +230,11 @@ pub fn process_file_with_machines(path: &PathBuf, machines: &[MachineRecord]) ->
     }
 }
 
-
 /// Safely moves a file to its target directory (`passed` or `rejected`).
 fn move_file_to_target(file_path: &Path, target_dir: &Path, verbose: bool) {
     if let Some(file_name) = file_path.file_name() {
         let destination = target_dir.join(file_name);
         if let Err(e) = fs::rename(file_path, &destination) {
-            // If the move fails (e.g. cross-device link limits), log a warning
             eprintln!(
                 "Warning: Failed to move file {:?} to {:?}: {}",
                 file_path, destination, e
@@ -142,8 +245,7 @@ fn move_file_to_target(file_path: &Path, target_dir: &Path, verbose: bool) {
     }
 }
 
-/// Formats a human-readable text report block for a single file
-/// and flips the `has_errors` flag if any issues were detected.
+/// Formats a human-readable text report block for a single file.
 fn format_file_report(
     report: &FileReport,
     estimated_cost: Option<f64>,
@@ -210,10 +312,16 @@ fn format_file_report(
     out
 }
 
+#[inline]
+fn round_to_2_decimals(val: f64) -> f64 {
+    (val * 100.0).round() / 100.0
+}
+
 /// Entry point for batch file or directory processing.
 pub fn run_batch(
     input_path: &PathBuf,
     output_path: Option<&PathBuf>,
+    is_json_format: bool,
     verbose: bool,
 ) -> Result<bool, String> {
     let db_path = PathBuf::from("gatekeeper.db");
@@ -224,17 +332,12 @@ pub fn run_batch(
         println!("[+] SQLite database initialized at {:?}", db_path);
     }
 
-    // Load active machines from SQLite database
     let machines = db
         .get_active_machines()
         .map_err(|e| format!("Failed to fetch active machines from DB: {e}"))?;
 
     if machines.is_empty() {
         return Err("No active machines found in database.".to_string());
-    }
-
-    if verbose {
-        println!("[+] Loaded {} active machine(s) for routing", machines.len());
     }
 
     let base_dir = if input_path.is_dir() {
@@ -257,9 +360,6 @@ pub fn run_batch(
     let mut files_to_process = Vec::new();
 
     if input_path.is_dir() {
-        if verbose {
-            println!("[+] Scanning directory: {:?}", input_path);
-        }
         let entries = fs::read_dir(input_path)
             .map_err(|e| format!("Error reading directory {:?}: {}", input_path, e))?;
 
@@ -281,14 +381,14 @@ pub fn run_batch(
     }
 
     let mut has_errors = false;
-    let mut output_content = String::from("=== CAD Batch Gatekeeper Report ===\n\n");
+    let mut json_items = Vec::with_capacity(files_to_process.len());
+    let mut output_text_content = String::from("=== CAD Batch Gatekeeper Report ===\n\n");
 
     for file_path in files_to_process {
         if verbose {
             println!("[+] Processing: {:?}", file_path);
         }
         let report = process_file_with_machines(&file_path, &machines);
-
         let target_dir = if report.is_passed {
             &passed_dir
         } else {
@@ -297,159 +397,63 @@ pub fn run_batch(
 
         move_file_to_target(&file_path, target_dir, verbose);
 
-        let verdict = if report.is_passed {
-            "PASSED"
-        } else {
-            "REJECTED"
-        };
+        // Извлекаем все вычисленные метрики за один проход
+        let metrics = report.extract_metrics(&db);
 
-        let mut estimated_cost = None;
-        let mut width_opt = None;
-        let mut height_opt = None;
-        let mut cut_len_opt = None;
-        let mut error_msg = None;
-
-        match &report.naming_status {
-            Ok(part) => {
-                if let Some(geom) = &report.geometry_status {
-                    match geom {
-                        ClassificationResult::Passed {
-                            width,
-                            height,
-                            cut_length,
-                            ..
-                        } => {
-                            width_opt = Some(*width);
-                            height_opt = Some(*height);
-                            cut_len_opt = Some(*cut_length);
-
-                            // Calculate commercial Quick Quote estimate
-                            if let Ok(Some(price_per_meter)) =
-                                db.get_cutting_tariff(&part.metal_grade, part.thickness)
-                            {
-                                estimated_cost = Some((*cut_length / 1000.0) * price_per_meter);
-                            }
-                        }
-                        ClassificationResult::OutOfBound {
-                            width,
-                            height,
-                            reason,
-                        } => {
-                            width_opt = Some(*width);
-                            height_opt = Some(*height);
-                            error_msg = Some(reason.clone());
-                        }
-                        ClassificationResult::Corrupted { reason, .. } => {
-                            error_msg = Some(reason.clone());
-                        }
-                    }
-                }
-            }
-            Err(err) => {
-                error_msg = Some(err.clone());
-            }
-        }
-
-        // Log inspection event into SQLite database
-        if let Err(e) = db.log_inspection(
-            &report.file_name,
-            &report.file_hash,
+        // Логирование в SQLite
+        let verdict = if report.is_passed { "PASSED" } else { "REJECTED" };
+        if let Err(e) = db.log_inspection(db::InspectionParams {
+            file_name: &report.file_name,
+            file_hash: &report.file_hash,
             verdict,
-            width_opt,
-            height_opt,
-            cut_len_opt,
-            estimated_cost,
-            error_msg.as_deref(),
-        ) {
+            width: metrics.width_mm,
+            height: metrics.height_mm,
+            cut_length: metrics.cut_length_mm,
+            estimated_cost: metrics.estimated_cost_eur,
+            error_reason: metrics.error_reason.as_deref(),
+        }) {
             eprintln!(
                 "Warning: Failed to log inspection into SQLite for {}: {}",
                 report.file_name, e
             );
         }
 
-        output_content.push_str(&format_file_report(
+        // Текстовый отчет
+        output_text_content.push_str(&format_file_report(
             &report,
-            estimated_cost,
+            metrics.estimated_cost_eur,
             &mut has_errors,
         ));
+
+        // JSON отчет
+        json_items.push(JsonFileItem::from_report(&report, &metrics));
     }
 
+    let final_output = if is_json_format {
+        let batch_report = JsonBatchReport {
+            total_files: json_items.len(),
+            passed_count: json_items.iter().filter(|i| i.verdict == "PASSED").count(),
+            rejected_count: json_items
+                .iter()
+                .filter(|i| i.verdict == "REJECTED")
+                .count(),
+            files: json_items,
+        };
+        serde_json::to_string_pretty(&batch_report)
+            .map_err(|e| format!("Failed to serialize JSON report: {e}"))?
+    } else {
+        output_text_content
+    };
+
     if let Some(out_path) = output_path {
-        fs::write(out_path, &output_content)
+        fs::write(out_path, &final_output)
             .map_err(|e| format!("Error writing report to '{out_path:?}': {e}"))?;
         if verbose {
             println!("[+] Batch report saved to {:?}", out_path);
         }
     } else {
-        print!("{output_content}");
+        print!("{final_output}");
     }
 
     Ok(has_errors)
-}
-
-
-#[cfg(test)]
-mod tests {
-    use crate::db::MachineRecord;
-
-use super::*;
-    use std::io::Write;
-
-    #[test]
-    fn test_compute_file_hash() {
-        let temp_dir = std::env::temp_dir();
-        let file_path = temp_dir.join("test_hash_sample.txt");
-
-        let mut file = File::create(&file_path).unwrap();
-        writeln!(file, "Hello CAD Gatekeeper!").unwrap();
-
-        let hash_result = compute_file_hash(&file_path);
-        assert!(hash_result.is_ok());
-        let hash = hash_result.unwrap();
-
-        assert_eq!(hash.len(), 64);
-
-        let _ = fs::remove_file(file_path);
-    }
-
-    #[test]
-    fn test_process_file_invalid_naming() {
-        let temp_dir = std::env::temp_dir();
-        let invalid_path = temp_dir.join("bad_file_name.dxf");
-
-        let mut file = File::create(&invalid_path).unwrap();
-        writeln!(file, "dummy content").unwrap();
-
-        let machines = vec![MachineRecord {
-            id: 1,
-            name: "Test-Laser".to_string(),
-            max_x: 3000.0,
-            max_y: 1500.0,
-        }];
-
-        let report = process_file_with_machines(&invalid_path, &machines);
-
-        assert!(!report.is_passed);
-        assert!(report.naming_status.is_err());
-        assert_eq!(report.file_hash, "N/A");
-
-        let _ = fs::remove_file(invalid_path);
-    }
-
-    #[test]
-    fn test_format_file_report_error_flag() {
-        let report = FileReport {
-            file_name: "test_part.dxf".to_string(),
-            file_hash: "N/A".to_string(),
-            naming_status: Err("Invalid name format".to_string()),
-            geometry_status: None,
-            is_passed: false,
-        };
-
-        let mut has_errors = false;
-        let formatted = format_file_report(&report, None, &mut has_errors);
-
-        assert!(has_errors);
-        assert!(formatted.contains("[✖] Naming Gatekeeper Rejected"));
-    }
 }

@@ -124,7 +124,9 @@ fn main() {
         }
     };
 
-    match pipeline::run_batch(&input_path, cli.output_path.as_ref(), cli.verbose) {
+    let is_json = cli.format == OutputFormat::Json;
+
+    match pipeline::run_batch(&input_path, cli.output_path.as_ref(), is_json, cli.verbose) {
         Ok(has_errors) => {
             if has_errors {
                 process::exit(1);
