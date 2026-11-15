@@ -75,3 +75,43 @@ impl<T> RawVec<T> {
         self.cap = new_cap;
     }
 }
+
+
+impl<T> Drop for RawVec<T> {
+    fn drop(&mut self) {
+        let elem_size = std::mem::size_of::<T>();
+
+        if self.cap > 0 && elem_size != 0 {
+            let layout = std::alloc::Layout::array::<T>(self.cap).unwrap();
+            unsafe {
+                std::alloc::dealloc(self.ptr.as_ptr() as *mut u8, layout);
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_raw_vec_allocation_and_growth() {
+        let mut raw: RawVec<i32> = RawVec::new();
+        assert_eq!(raw.cap, 0);
+
+        raw.grow();
+        assert_eq!(raw.cap, 4);
+
+        raw.grow();
+        assert_eq!(raw.cap, 8);
+    }
+
+    #[test]
+    fn test_zero_sized_types() {
+        let mut raw: RawVec<()> = RawVec::new();
+        assert_eq!(raw.cap, usize::MAX);
+
+        raw.grow();
+        assert_eq!(raw.cap, usize::MAX);
+    }
+}
