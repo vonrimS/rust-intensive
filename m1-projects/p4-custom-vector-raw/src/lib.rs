@@ -144,6 +144,14 @@ impl<T> CustomVec<T> {
     
 }
 
+
+impl<T> Drop for CustomVec<T>{
+    // Call pop() till vector is not empty
+    fn drop(&mut self) {
+        while self.pop().is_some() {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
