@@ -90,6 +90,60 @@ impl<T> Drop for RawVec<T> {
     }
 }
 
+/// A contiguous, growable array type implemented from scratch.
+pub struct CustomVec<T> {
+    buf: RawVec<T>,
+    len: usize,
+}
+
+impl<T> CustomVec<T> {
+    /// Creates a new, empty `CustomVec`.
+    pub fn new() -> Self {
+        Self {
+            buf: RawVec::new(),
+            len: 0,
+        }
+    }
+
+    /// Returns the number of elements in the vector.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// Returns `true` if the vector contains no elements.
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Appends an element to the back of the collection.
+    pub fn push(&mut self, elem: T) {
+        if self.len == self.buf.cap {
+            self.buf.grow();
+        }
+
+        unsafe {
+            let end_ptr = self.buf.ptr.as_ptr().add(self.len);
+            std::ptr::write(end_ptr, elem);
+        }
+
+        self.len += 1;
+    }
+
+    /// Removes the last element from the vector and return it, or `None` if it's empty.
+    pub fn pop(&mut self) -> Option<T> {
+        if self.len == 0 {
+            None
+        } else {
+            self.len -= 1;
+            unsafe  {
+                let elem_ptr = self.buf.ptr.as_ptr().add(self.len);
+                Some(std::ptr::read(elem_ptr))
+            }
+        }
+    }
+    
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -113,5 +167,29 @@ mod tests {
 
         raw.grow();
         assert_eq!(raw.cap, usize::MAX);
+    }
+
+    #[test]
+    fn test_custom_vec_push_pop() {
+        let mut vec = CustomVec::new();
+        assert!(vec.is_empty());
+        assert_eq!(vec.len(), 0);
+
+        vec.push(10);
+        vec.push(20); 
+        vec.push(30);
+        
+        assert_eq!(vec.len(), 3);
+        assert!(!vec.is_empty());
+        
+        assert_eq!(vec.pop(), Some(30));
+        assert_eq!(vec.pop(), Some(20));
+        assert_eq!(vec.len(), 1);
+        
+        vec.push(40);
+        assert_eq!(vec.pop(), Some(40));
+        assert_eq!(vec.pop(), Some(10));
+        assert_eq!(vec.pop(), None);
+        assert!(vec.is_empty());
     }
 }
