@@ -1,7 +1,5 @@
 use std::{
-    alloc::{Layout, alloc, handle_alloc_error, realloc},
-    marker::PhantomData,
-    ptr::NonNull,
+    alloc::{Layout, alloc, handle_alloc_error, realloc}, marker::PhantomData, ops::{Index, IndexMut}, ptr::NonNull,
 };
 
 /// Low-level memory buffer for `CustomVec<T>`.
@@ -152,6 +150,28 @@ impl<T> Drop for CustomVec<T>{
     }
 }
 
+impl<T> Index<usize> for CustomVec<T>{
+    type Output = T;
+
+    fn index(&self, index: usize) -> &Self::Output {
+        assert!(index < self.len, "index out of bounds: the len is {} but the index is {}", self.len, index);
+        unsafe {
+            // Safely gets an immutable refernce to the element by index
+            &*self.buf.ptr.as_ptr().add(index)
+        }
+    }
+}
+
+impl<T> IndexMut<usize> for CustomVec<T> {
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        assert!(index < self.len, "index out of bounds: the len is {} but the index is {}", self.len, index);
+        unsafe {
+            // Safely gets a mutable refernce to the element by index
+            &mut *self.buf.ptr.as_ptr().add(index)
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,4 +220,19 @@ mod tests {
         assert_eq!(vec.pop(), None);
         assert!(vec.is_empty());
     }
+
+    #[test]
+    fn test_custom_vec_indexing() {
+        let mut vec = CustomVec::new();
+        vec.push(10);
+        vec.push(20);
+        vec.push(30);
+        assert_eq!(vec[0], 10);
+        assert_eq!(vec[1], 20);
+        assert_eq!(vec[2], 30);
+        
+        vec[1] = 1000;
+        assert_eq!(vec[1], 1000);
+    }
+
 }
