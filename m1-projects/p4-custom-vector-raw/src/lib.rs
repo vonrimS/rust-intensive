@@ -139,7 +139,24 @@ impl<T> CustomVec<T> {
             }
         }
     }
-    
+
+    /// Consumes the vector and returns an iterator over its items.
+    pub fn into_iter(self) -> IntoIter<T> {
+        unsafe {
+            let buf = std::ptr::read(&self.buf);
+            let len = self.len;
+            std::mem::forget(self);
+
+            let ptr = buf.ptr;
+            let end = if buf.cap == 0 || std::mem::size_of::<T>() == 0 {
+                ptr.as_ptr()
+            } else {
+                ptr.as_ptr().add(len)
+            };
+
+            IntoIter { _buf: buf, ptr, end }
+        }
+    }    
 }
 
 
@@ -169,6 +186,37 @@ impl<T> IndexMut<usize> for CustomVec<T> {
             // Safely gets a mutable refernce to the element by index
             &mut *self.buf.ptr.as_ptr().add(index)
         }
+    }
+}
+
+/// An iterator that moves out of a `CustomVec`.
+pub struct IntoIter<T> {
+    _buf: RawVec<T>,            // Holds buffer ownership so it gets deallocated when the iterator drops
+    ptr: std::ptr::NonNull<T>,  
+    end: *mut T,                // Points to the element just past the end of the initial slice
+}
+
+
+impl <T> Iterator for IntoIter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.ptr.as_ptr() == self.end {
+            None
+        } else {
+            unsafe {
+                let old_ptr = self.ptr.as_ptr();
+                self.ptr = std::ptr::NonNull::new(old_ptr.add(1)).unwrap();
+                Some(std::ptr::read(old_ptr))
+            }
+        }
+    }    
+}
+
+impl<T> Drop for IntoIter<T> {
+    fn drop(&mut self) {
+        // Drain any remaining elements to run their destructors
+        for _ in self {}
     }
 }
 
@@ -235,4 +283,17 @@ mod tests {
         assert_eq!(vec[1], 1000);
     }
 
+    #[test]
+    fn test_custom_vec_into_iter() {
+        let mut vec = CustomVec::new();
+        vec.push(1);
+        vec.push(2);
+        vec.push(3);
+
+        let mut iter = vec.into_iter();
+        assert_eq!(iter.next(), Some(1));
+        assert_eq!(iter.next(), Some(2));
+        assert_eq!(iter.next(), Some(3));
+        assert_eq!(iter.next(), None);
+    }
 }
